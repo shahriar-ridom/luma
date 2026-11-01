@@ -1,0 +1,196 @@
+name: Release
+
+# Push a tag such as v0.2.0 to build every package and publish a GitHub release.
+# Run it by hand (Actions → Release → Run workflow) for a dry run that only uploads artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  UBUNTU_DEPS: >-
+    build-essential pkg-config libgtk-4-dev libadwaita-1-dev libsqlite3-dev
+    git libarchive-tools shared-mime-info
+
+jobs:
+  verify:
+    name: Check versions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versions agree with the tag
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then tools/check-version.sh "${GITHUB_REF_NAME}"; else tools/check-version.sh; fi
+
+  binary:
+    name: Linux binary (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          # shellcheck disable=SC2086
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: tools/package-tarball.sh dist ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  deb:
+    name: Debian package (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          # shellcheck disable=SC2086
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-deb --locked
+      - run: cargo build --release --locked
+      - run: cargo deb --no-build --no-strip
+      - name: Inspect the package
+        run: |
+          deb=(target/debian/*.deb)
+          dpkg-deb --info "${deb[0]}"
+          dpkg-deb --contents "${deb[0]}"
+      - run: mkdir -p dist && cp target/debian/*.deb dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  appimage:
+    name: AppImage (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and bundling dependencies
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS \
+            adwaita-icon-theme librsvg2-common libfuse2t64 file desktop-file-utils patchelf curl
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: ARCH=${{ matrix.arch }} packaging/appimage/build-appimage.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  arch:
+    name: Arch Linux package
+    needs: verify
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: pacman -Syu --noconfirm base-devel git rust gtk4 libadwaita sqlite libarchive shared-mime-info
+      - uses: actions/checkout@v4
+      - name: Build with makepkg
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tools/make-source-tarball.sh packaging/arch
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg -f --noconfirm --nocheck"
+      - run: mkdir -p dist && cp packaging/arch/*.pkg.tar.zst dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  fedora:
+    name: Fedora package
+    needs: verify
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install build tools
+        run: |
+          dnf install -y rpm-build git tar gzip gcc make rust cargo pkgconf-pkg-config \
+            'pkgconfig(gtk4)' 'pkgconfig(libadwaita-1)' 'pkgconfig(sqlite3)' \
+            desktop-file-utils libappstream-glib bsdtar shared-mime-info
+      - uses: actions/checkout@v4
+      - name: Build with rpmbuild
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p "$HOME/rpmbuild/SOURCES"
+          tools/make-source-tarball.sh "$HOME/rpmbuild/SOURCES"
+          rpmbuild -bb packaging/fedora/file-manager.spec
+      - run: mkdir -p dist && cp "$HOME"/rpmbuild/RPMS/*/*.rpm dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [binary, deb, appimage, arch, fedora]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum ./* | sed 's| \./| |' | tee SHA256SUMS
+      - name: Release notes from the changelog
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Release $ver" > notes.md
+          cat notes.md
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

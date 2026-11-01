@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  UBUNTU_DEPS: >-
+    build-essential pkg-config libgtk-4-dev libadwaita-1-dev libsqlite3-dev
+    git libarchive-tools shared-mime-info
+
+jobs:
+  lint:
+    name: Format and lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system libraries
+        run: |
+          # shellcheck disable=SC2086
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: Test (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system libraries
+        run: |
+          # shellcheck disable=SC2086
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release
+      - run: cargo test --locked
+
+  distros:
+    name: Build and test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Fedora
+            image: fedora:latest
+            setup: >-
+              dnf install -y gcc make git tar gzip curl pkgconf-pkg-config gtk4-devel
+              libadwaita-devel sqlite-devel bsdtar shared-mime-info
+          - name: Arch Linux
+            image: archlinux:latest
+            setup: >-
+              pacman -Syu --noconfirm base-devel git curl gtk4 libadwaita sqlite
+              libarchive shared-mime-info
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install system libraries
+        run: ${{ matrix.setup }}
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: cargo build --locked
+      - run: cargo test --locked
+
+  metadata:
+    name: Packaging metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validators
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends desktop-file-utils appstream shellcheck
+      - name: Desktop entry
+        run: desktop-file-validate data/dev.filemanager.FileManager.desktop
+      - name: AppStream metadata
+        run: appstreamcli validate --no-net data/dev.filemanager.FileManager.metainfo.xml
+      - name: Versions agree everywhere
+        run: tools/check-version.sh
+      - name: Shell scripts
+        run: shellcheck tools/*.sh packaging/appimage/*.sh packaging/linux-binary/install.sh
+
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

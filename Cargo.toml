@@ -1,0 +1,58 @@
+[package]
+name = "file-manager"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A fast, native GTK4/libadwaita file manager for Linux"
+license = "GPL-3.0-or-later" # placeholder: confirm before the first release
+repository = "https://github.com/shahriar-ridom/luma.git"
+readme = "README.md"
+keywords = ["file-manager", "gtk4", "libadwaita", "linux"]
+categories = ["gui", "filesystem"]
+
+[dependencies]
+adw = { version = "0.9.2", package = "libadwaita", features = ["v1_5"] }
+anyhow = "1.0.104"
+async-channel = "2.5.0"
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_12"] }
+include_dir = "0.7.4"
+kamadak-exif = "0.6.1"
+lofty = "0.25.5"
+nix = { version = "0.31.3", features = ["user", "fs"] }
+regex = "1.13.1"
+rusqlite = "0.41.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+shell-words = "1.1.1"
+similar = "3.2.1"
+thiserror = "2.0.21"
+toml = "1.1.8"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+
+# `cargo deb` — Debian 13+/Ubuntu 24.04+ (needs GTK 4.12 and libadwaita 1.5).
+[package.metadata.deb]
+name = "file-manager"
+maintainer = "File Manager contributors <noreply@example.com>"
+copyright = "File Manager contributors"
+section = "utils"
+priority = "optional"
+extended-description = """\
+A fast, native file manager for Linux with grid, list, column and gallery \
+views, tabs and split view, Quick Look, archives, search, tags, Git status, \
+Google Drive and network locations, undo, plugins and custom actions."""
+depends = "$auto, libsqlite3-0, libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.5), libarchive-tools, shared-mime-info"
+recommends = "gvfs, gvfs-fuse, git, rclone, fuse3, poppler-utils, ffmpeg"
+assets = [
+    ["target/release/file-manager", "usr/bin/", "755"],
+    ["data/dev.filemanager.FileManager.desktop", "usr/share/applications/", "644"],
+    ["data/dev.filemanager.FileManager.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["data/icons/hicolor/scalable/**/*.svg", "usr/share/icons/hicolor/scalable/", "644"],
+    ["README.md", "usr/share/doc/file-manager/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/file-manager/CHANGELOG.md", "644"],
+]

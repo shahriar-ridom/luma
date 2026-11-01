@@ -1,0 +1,10 @@
+target
+dist/
+pkg/
+src-pkg/
+*.AppImage
+*.pkg.tar.*
+*.deb
+*.rpm
+AppDir/
+.fm-build/

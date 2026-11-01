@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.filemanager.FileManager</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>File Manager</name>
+  <summary>A fast, native file manager for Linux</summary>
+  <description>
+    <p>
+      File Manager pairs a calm, Finder-like interface with the depth of a power-user file manager.
+      It is built on GTK 4 and libadwaita and works with Wayland and X11.
+    </p>
+    <ul>
+      <li>Icon, list, column and gallery views with background thumbnails</li>
+      <li>Tabs, split view, bookmarks, tags and Quick Look previews</li>
+      <li>Reliable background copy, move and delete with conflict handling and undo</li>
+      <li>Archives, search, duplicate finder, file compare, batch rename and permissions</li>
+      <li>Git status, Google Drive, network locations and removable drives</li>
+      <li>Custom actions and plugins</li>
+    </ul>
+  </description>
+  <developer id="dev.filemanager">
+    <name>File Manager contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/shahriar-ridom/luma.git</url>
+  <url type="bugtracker">https://github.com/shahriar-ridom/luma.git/issues</url>
+  <launchable type="desktop-id">dev.filemanager.FileManager.desktop</launchable>
+  <provides>
+    <binary>file-manager</binary>
+  </provides>
+  <categories>
+    <category>System</category>
+    <category>FileTools</category>
+    <category>FileManager</category>
+  </categories>
+  <keywords>
+    <keyword>files</keyword>
+    <keyword>folders</keyword>
+    <keyword>archive</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <releases>
+    <release version="0.1.0" date="2026-11-02"/>
+  </releases>
+</component>

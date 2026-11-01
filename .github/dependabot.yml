@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      gtk-stack:
+        patterns: ["gtk4*", "libadwaita*", "gio*", "glib*", "gdk*", "graphene*", "pango*", "cairo*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

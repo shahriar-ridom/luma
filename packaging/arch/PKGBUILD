@@ -1,0 +1,46 @@
+# Maintainer: File Manager contributors <noreply@example.com>
+#
+# Local/CI build: place file-manager-$pkgver.tar.gz (tools/make-source-tarball.sh) next to this file.
+# For the AUR, replace `source` with the release tarball URL and set a real checksum.
+pkgname=file-manager
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='A fast, native GTK4/libadwaita file manager'
+arch=('x86_64' 'aarch64')
+url='https://github.com/shahriar-ridom/luma.git'
+license=('GPL-3.0-or-later')
+depends=('gtk4' 'libadwaita' 'sqlite' 'libarchive' 'shared-mime-info')
+makedepends=('cargo')
+options=('!debug')
+optdepends=('git: repository status and actions'
+            'gvfs: network locations and mounting drives'
+            'rclone: Google Drive'
+            'fuse3: Google Drive mounts'
+            'poppler: PDF details'
+            'ffmpeg: video details'
+            'gst-plugins-good: audio and video playback in Quick Look')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo test --frozen
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  make install DESTDIR="$pkgdir" PREFIX=/usr
+}
