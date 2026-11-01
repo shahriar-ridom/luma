@@ -73,7 +73,7 @@ impl Preview {
         let icon = gtk::Image::new();
         icon.set_pixel_size(if large { 192 } else { 128 });
         let empty = adw::StatusPage::new();
-        empty.set_icon_name(Some("fm-eye-symbolic"));
+        empty.set_icon_name(Some("luma-eye-symbolic"));
         empty.set_title("No Selection");
         empty.set_description(Some("Select a file to preview it"));
 

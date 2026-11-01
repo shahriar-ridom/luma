@@ -58,20 +58,20 @@ pub async fn load_dir(
 /// same whatever icon theme the system uses.
 pub fn icon_name(mime: &str, is_dir: bool) -> &'static str {
     if is_dir {
-        return "fm-folder";
+        return "luma-folder";
     }
     let m = mime;
     if m.starts_with("image/") {
-        "fm-file-image"
+        "luma-file-image"
     } else if m.starts_with("audio/") {
-        "fm-file-audio"
+        "luma-file-audio"
     } else if m.starts_with("video/") {
-        "fm-file-video"
+        "luma-file-video"
     } else if ["zip", "tar", "compress", "7z", "rar", "gzip", "xz", "zstd", "bzip", "cpio", "iso9660"]
         .iter()
         .any(|k| m.contains(k))
     {
-        "fm-file-archive"
+        "luma-file-archive"
     } else if m == "text/markdown"
         || m == "application/pdf"
         || m == "application/rtf"
@@ -80,7 +80,7 @@ pub fn icon_name(mime: &str, is_dir: bool) -> &'static str {
         || m == "application/msword"
         || m == "text/plain"
     {
-        "fm-file-document"
+        "luma-file-document"
     } else if m.starts_with("text/")
         || m.contains("json")
         || m.contains("xml")
@@ -91,9 +91,9 @@ pub fn icon_name(mime: &str, is_dir: bool) -> &'static str {
         || m.contains("x-sql")
         || m.contains("x-desktop")
     {
-        "fm-file-code"
+        "luma-file-code"
     } else {
-        "fm-file"
+        "luma-file"
     }
 }
 
@@ -129,14 +129,14 @@ mod tests {
 
     #[test]
     fn icon_names_by_type() {
-        assert_eq!(icon_name("inode/directory", true), "fm-folder");
-        assert_eq!(icon_name("image/png", false), "fm-file-image");
-        assert_eq!(icon_name("application/gzip", false), "fm-file-archive");
-        assert_eq!(icon_name("application/x-compressed-tar", false), "fm-file-archive");
-        assert_eq!(icon_name("application/pdf", false), "fm-file-document");
-        assert_eq!(icon_name("text/x-rust", false), "fm-file-code");
-        assert_eq!(icon_name("application/x-shellscript", false), "fm-file-code");
-        assert_eq!(icon_name("application/octet-stream", false), "fm-file");
+        assert_eq!(icon_name("inode/directory", true), "luma-folder");
+        assert_eq!(icon_name("image/png", false), "luma-file-image");
+        assert_eq!(icon_name("application/gzip", false), "luma-file-archive");
+        assert_eq!(icon_name("application/x-compressed-tar", false), "luma-file-archive");
+        assert_eq!(icon_name("application/pdf", false), "luma-file-document");
+        assert_eq!(icon_name("text/x-rust", false), "luma-file-code");
+        assert_eq!(icon_name("application/x-shellscript", false), "luma-file-code");
+        assert_eq!(icon_name("application/octet-stream", false), "luma-file");
     }
 
     #[test]

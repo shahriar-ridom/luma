@@ -55,7 +55,7 @@ impl OpsUi {
         let pop = gtk::Popover::new();
         pop.set_child(Some(&sw));
         let button = gtk::MenuButton::new();
-        button.set_icon_name("fm-activity-symbolic");
+        button.set_icon_name("luma-activity-symbolic");
         button.set_tooltip_text(Some("Operations"));
         button.set_popover(Some(&pop));
         button.set_visible(false);
@@ -114,7 +114,7 @@ impl OpsUi {
         label.set_hexpand(true);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.add_css_class("heading");
-        let stop = gtk::Button::from_icon_name("fm-close-symbolic");
+        let stop = gtk::Button::from_icon_name("luma-close-symbolic");
         stop.add_css_class("flat");
         stop.set_tooltip_text(Some("Cancel"));
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -323,11 +323,11 @@ impl OpRow {
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         title.add_css_class("heading");
         let pause = gtk::ToggleButton::new();
-        pause.set_icon_name("fm-pause-symbolic");
+        pause.set_icon_name("luma-pause-symbolic");
         pause.set_tooltip_text(Some("Pause / resume"));
         pause.add_css_class("flat");
         pause.set_visible(matches!(req.kind, OpKind::Copy | OpKind::Move | OpKind::Delete));
-        let cancel = gtk::Button::from_icon_name("fm-close-symbolic");
+        let cancel = gtk::Button::from_icon_name("luma-close-symbolic");
         cancel.set_tooltip_text(Some("Cancel"));
         cancel.add_css_class("flat");
         let retry = gtk::Button::with_label("Retry");
@@ -399,7 +399,7 @@ impl OpRow {
         self.status.set_text(msg);
         self.status.remove_css_class("dim-label");
         self.status.add_css_class("error");
-        self.cancel.set_icon_name("fm-close-symbolic");
+        self.cancel.set_icon_name("luma-close-symbolic");
         self.cancel.set_tooltip_text(Some("Dismiss"));
         self.retry.set_visible(can_retry);
         self.cancel.connect_clicked(move |_| dismiss());

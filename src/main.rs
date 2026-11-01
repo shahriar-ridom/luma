@@ -12,7 +12,7 @@ mod ui;
 use gtk::glib;
 
 fn main() -> glib::ExitCode {
-    // `RUST_LOG=debug file-manager` for diagnostics; warnings only by default.
+    // `RUST_LOG=debug luma` for diagnostics; warnings only by default.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

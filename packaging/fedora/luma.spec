@@ -3,12 +3,12 @@
 # project-built packages, not for Fedora's own offline build system.
 %global debug_package %{nil}
 
-Name:           file-manager
+Name:           luma
 Version:        0.1.0
 Release:        1%{?dist}
 Summary:        A fast, native GTK4/libadwaita file manager
-License:        GPL-3.0-or-later
-URL:            https://github.com/shahriar-ridom/luma.git
+License:        GPL-3.0-only
+URL:            https://github.com/shahriar-ridom/luma
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  cargo
@@ -33,7 +33,7 @@ Suggests:       fuse3
 Suggests:       poppler-utils
 
 %description
-File Manager pairs a calm, Finder-like interface with the depth of a power-user
+Luma pairs a calm, Finder-like interface with the depth of a power-user
 file manager: icon, list, column and gallery views, tabs and split view,
 Quick Look, archives, search, tags, Git status, Google Drive and network
 locations, undo, plugins and custom actions.
@@ -49,15 +49,16 @@ cargo build --release --locked
 make install DESTDIR=%{buildroot} PREFIX=%{_prefix}
 
 %check
-desktop-file-validate %{buildroot}%{_datadir}/applications/dev.filemanager.FileManager.desktop
+desktop-file-validate %{buildroot}%{_datadir}/applications/dev.ridom.Luma.desktop
 
 %files
-%{_bindir}/file-manager
-%{_datadir}/applications/dev.filemanager.FileManager.desktop
-%{_datadir}/metainfo/dev.filemanager.FileManager.metainfo.xml
+%{_bindir}/luma
+%{_datadir}/applications/dev.ridom.Luma.desktop
+%{_datadir}/metainfo/dev.ridom.Luma.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/*
-%doc %{_docdir}/file-manager
+%doc %{_docdir}/luma
+%license %{_datadir}/licenses/luma/LICENSE
 
 %changelog
-* Mon Nov 02 2026 File Manager contributors <noreply@example.com> - 0.1.0-1
+* Mon Nov 02 2026 Luma contributors <info@ridom.dev> - 0.1.0-1
 - First release

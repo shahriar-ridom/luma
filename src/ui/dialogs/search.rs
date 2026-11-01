@@ -51,7 +51,7 @@ pub fn show(parent: &gtk::Window, root: PathBuf, app: Rc<AppState>, on_open: Rc<
     let go = gtk::Button::with_label("Search");
     go.add_css_class("suggested-action");
     let history = gtk::MenuButton::new();
-    history.set_icon_name("fm-history-symbolic");
+    history.set_icon_name("luma-history-symbolic");
     history.set_tooltip_text(Some("Search history"));
 
     let kinds: Vec<&str> = KindFilter::ALL.iter().map(|k| k.label()).collect();

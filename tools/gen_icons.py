@@ -65,7 +65,7 @@ def _outline(inner):
 
 def sym(name, inner, sub="actions"):
     d = _outline(inner)
-    write(sub, f"fm-{name}-symbolic",
+    write(sub, f"luma-{name}-symbolic",
         f'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
         f'<path fill="{INK}" fill-rule="evenodd" d="{d}"/></svg>\n')
 
@@ -129,7 +129,7 @@ PAGE = ("<defs>"
         '<path d="M38 4v9a4 4 0 0 0 4 4h9z" fill="#d3d9e4" stroke="#1b2430" stroke-opacity=".10" stroke-width="1" stroke-linejoin="round"/>')
 
 def file_icon(name, glyph):
-    write("mimetypes", f"fm-{name}", f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">{PAGE}{glyph}</svg>\n')
+    write("mimetypes", f"luma-{name}", f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">{PAGE}{glyph}</svg>\n')
 
 def stroke(c, inner, w=2.6):
     return f'<g fill="none" stroke="{c}" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round">{inner}</g>'
@@ -142,10 +142,19 @@ file_icon("file-video", '<rect x="21" y="32" width="22" height="17" rx="4" fill=
 file_icon("file-archive", stroke("#2bb3a0", '<path d="M32 22v2M32 27v2M32 32v2"/><rect x="26.5" y="37" width="11" height="12" rx="3" fill="#2bb3a0" fill-opacity=".18"/><path d="M32 41v3"/>'))
 file_icon("file-code", stroke("#5b6b84", '<path d="m27 36-5 6 5 6M37 36l5 6-5 6M33.5 33l-3 18"/>'))
 
-write("places", "fm-folder", '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs>'
+write("places", "luma-folder", '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs>'
       '<linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5b8bea"/><stop offset="1" stop-color="#4a73d2"/></linearGradient>'
       '<linearGradient id="f" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a4c4ff"/><stop offset="1" stop-color="#7aa5f6"/></linearGradient></defs>'
       '<path d="M5 16a5 5 0 0 1 5-5h14.2a4 4 0 0 1 3 1.4l3.3 3.8H54a5 5 0 0 1 5 5V47a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z" fill="url(#b)"/>'
       '<path d="M5 26a5 5 0 0 1 5-5h44a5 5 0 0 1 5 5v21a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z" fill="url(#f)"/>'
       '<path d="M10.5 21.6h43" stroke="#fff" stroke-opacity=".55" stroke-width="1.4" stroke-linecap="round"/></svg>\n')
+# ---- application icon: a luminous folder ----
+write("apps", "dev.ridom.Luma", '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><defs>'
+      '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fb4ff"/><stop offset="1" stop-color="#3d5fc4"/></linearGradient>'
+      '<linearGradient id="back" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".62"/><stop offset="1" stop-color="#ffffff" stop-opacity=".38"/></linearGradient>'
+      '<linearGradient id="front" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe8ff"/></linearGradient></defs>'
+      '<rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg)"/>'
+      '<path d="M26 44a8 8 0 0 1 8-8h22.5a6 6 0 0 1 4.6 2.1l5.4 6.4H94a8 8 0 0 1 8 8v8H26z" fill="url(#back)"/>'
+      '<path d="M26 56a8 8 0 0 1 8-8h60a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8H34a8 8 0 0 1-8-8z" fill="url(#front)"/>'
+      '<path d="M96 14l2.6 8.4L107 25l-8.4 2.6L96 36l-2.6-8.4L85 25l8.4-2.6z" fill="#ffffff"/></svg>\n')
 print("icons written to", os.path.abspath(ROOT))

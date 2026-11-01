@@ -24,8 +24,8 @@ pub struct GalleryView {
 impl GalleryView {
     pub fn new(selection: &gtk::MultiSelection, ctx: &ItemCtx, thumbs: Thumbnailer) -> Rc<Self> {
         let preview = Preview::new(true);
-        let prev = gtk::Button::from_icon_name("fm-back-symbolic");
-        let next = gtk::Button::from_icon_name("fm-forward-symbolic");
+        let prev = gtk::Button::from_icon_name("luma-back-symbolic");
+        let next = gtk::Button::from_icon_name("luma-forward-symbolic");
         for b in [&prev, &next] {
             b.add_css_class("circular");
             b.add_css_class("fm-gallery-nav");

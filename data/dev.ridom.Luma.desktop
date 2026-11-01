@@ -1,18 +1,18 @@
 [Desktop Entry]
 Type=Application
-Name=File Manager
+Name=Luma
 GenericName=Files
 Comment=Browse and manage files
-Exec=file-manager %U
-Icon=dev.filemanager.FileManager
+Exec=luma %U
+Icon=dev.ridom.Luma
 Terminal=false
 Categories=GTK;System;FileTools;FileManager;
 Keywords=files;folders;browse;explorer;directory;archive;
 MimeType=inode/directory;
 StartupNotify=true
-StartupWMClass=dev.filemanager.FileManager
+StartupWMClass=dev.ridom.Luma
 Actions=new-window;
 
 [Desktop Action new-window]
 Name=New Window
-Exec=file-manager
+Exec=luma

@@ -51,7 +51,7 @@ pub fn extract_icons(root: &Path) -> io::Result<()> {
 pub fn icon_search_path(cache_home: &Path) -> io::Result<PathBuf> {
     let mut files = Vec::new();
     walk(&ICONS, &mut files);
-    let root = cache_home.join("file-manager").join(format!("icons-{}", fingerprint(&files)));
+    let root = cache_home.join("luma").join(format!("icons-{}", fingerprint(&files)));
     if !root.join(MARKER).exists() {
         extract_icons(&root)?;
     }
@@ -68,10 +68,10 @@ mod tests {
         let _ = fs::remove_dir_all(&cache);
         let root = icon_search_path(&cache).unwrap();
         for f in [
-            "hicolor/scalable/places/fm-folder.svg",
-            "hicolor/scalable/mimetypes/fm-file-image.svg",
-            "hicolor/scalable/actions/fm-back-symbolic.svg",
-            "hicolor/scalable/apps/dev.filemanager.FileManager.svg",
+            "hicolor/scalable/places/luma-folder.svg",
+            "hicolor/scalable/mimetypes/luma-file-image.svg",
+            "hicolor/scalable/actions/luma-back-symbolic.svg",
+            "hicolor/scalable/apps/dev.ridom.Luma.svg",
         ] {
             assert!(root.join(f).is_file(), "{f}");
         }

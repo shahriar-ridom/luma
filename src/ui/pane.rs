@@ -154,6 +154,9 @@ impl Pane {
         let stack = gtk::Stack::new();
         stack.set_transition_type(gtk::StackTransitionType::Crossfade);
         stack.set_transition_duration(120);
+        // Only the visible view counts toward the minimum size (the gallery is tall).
+        stack.set_vhomogeneous(false);
+        stack.set_hhomogeneous(false);
         stack.add_named(&grid.widget, Some("grid"));
         stack.add_named(&list.widget, Some("list"));
         stack.add_named(&columns.widget, Some("column"));

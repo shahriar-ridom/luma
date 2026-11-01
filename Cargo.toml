@@ -1,13 +1,13 @@
 [package]
-name = "file-manager"
+name = "luma"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A fast, native GTK4/libadwaita file manager for Linux"
-license = "GPL-3.0-or-later" # placeholder: confirm before the first release
-repository = "https://github.com/shahriar-ridom/luma.git"
+license = "GPL-3.0-only"
+repository = "https://github.com/shahriar-ridom/luma"
 readme = "README.md"
-keywords = ["file-manager", "gtk4", "libadwaita", "linux"]
+keywords = ["luma", "gtk4", "libadwaita", "linux"]
 categories = ["gui", "filesystem"]
 
 [dependencies]
@@ -37,9 +37,10 @@ strip = true
 
 # `cargo deb` — Debian 13+/Ubuntu 24.04+ (needs GTK 4.12 and libadwaita 1.5).
 [package.metadata.deb]
-name = "file-manager"
-maintainer = "File Manager contributors <noreply@example.com>"
-copyright = "File Manager contributors"
+name = "luma"
+maintainer = "Luma contributors <info@ridom.dev>"
+copyright = "Luma contributors"
+license-file = ["LICENSE", "0"]
 section = "utils"
 priority = "optional"
 extended-description = """\
@@ -49,10 +50,11 @@ Google Drive and network locations, undo, plugins and custom actions."""
 depends = "$auto, libsqlite3-0, libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.5), libarchive-tools, shared-mime-info"
 recommends = "gvfs, gvfs-fuse, git, rclone, fuse3, poppler-utils, ffmpeg"
 assets = [
-    ["target/release/file-manager", "usr/bin/", "755"],
-    ["data/dev.filemanager.FileManager.desktop", "usr/share/applications/", "644"],
-    ["data/dev.filemanager.FileManager.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["target/release/luma", "usr/bin/", "755"],
+    ["data/dev.ridom.Luma.desktop", "usr/share/applications/", "644"],
+    ["data/dev.ridom.Luma.metainfo.xml", "usr/share/metainfo/", "644"],
     ["data/icons/hicolor/scalable/**/*.svg", "usr/share/icons/hicolor/scalable/", "644"],
-    ["README.md", "usr/share/doc/file-manager/README.md", "644"],
-    ["CHANGELOG.md", "usr/share/doc/file-manager/CHANGELOG.md", "644"],
+    ["README.md", "usr/share/doc/luma/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/luma/CHANGELOG.md", "644"],
+    ["LICENSE", "usr/share/doc/luma/LICENSE", "644"],
 ]

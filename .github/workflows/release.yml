@@ -151,7 +151,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           mkdir -p "$HOME/rpmbuild/SOURCES"
           tools/make-source-tarball.sh "$HOME/rpmbuild/SOURCES"
-          rpmbuild -bb packaging/fedora/file-manager.spec
+          rpmbuild -bb packaging/fedora/luma.spec
       - run: mkdir -p dist && cp "$HOME"/rpmbuild/RPMS/*/*.rpm dist/
       - uses: actions/upload-artifact@v4
         with:
