@@ -45,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
       - run: tools/package-tarball.sh dist ${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -77,7 +77,7 @@ jobs:
           dpkg-deb --info "${deb[0]}"
           dpkg-deb --contents "${deb[0]}"
       - run: mkdir -p dist && cp target/debian/*.deb dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.arch }}
           path: dist/*.deb
@@ -105,7 +105,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
       - run: ARCH=${{ matrix.arch }} packaging/appimage/build-appimage.sh dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage-${{ matrix.arch }}
           path: dist/*.AppImage
@@ -128,7 +128,7 @@ jobs:
           chown -R builder:builder "$GITHUB_WORKSPACE"
           su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg -f --noconfirm --nocheck"
       - run: mkdir -p dist && cp packaging/arch/*.pkg.tar.zst dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arch
           path: dist/*.pkg.tar.zst
@@ -153,7 +153,7 @@ jobs:
           tools/make-source-tarball.sh "$HOME/rpmbuild/SOURCES"
           rpmbuild -bb packaging/fedora/luma.spec
       - run: mkdir -p dist && cp "$HOME"/rpmbuild/RPMS/*/*.rpm dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fedora
           path: dist/*.rpm
