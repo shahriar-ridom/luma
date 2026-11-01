@@ -54,6 +54,7 @@ assets = [
     ["data/dev.ridom.Luma.desktop", "usr/share/applications/", "644"],
     ["data/dev.ridom.Luma.metainfo.xml", "usr/share/metainfo/", "644"],
     ["data/icons/hicolor/scalable/**/*.svg", "usr/share/icons/hicolor/scalable/", "644"],
+    ["data/icons/hicolor/256x256/apps/*.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
     ["README.md", "usr/share/doc/luma/README.md", "644"],
     ["CHANGELOG.md", "usr/share/doc/luma/CHANGELOG.md", "644"],
     ["LICENSE", "usr/share/doc/luma/LICENSE", "644"],

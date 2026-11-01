@@ -18,7 +18,7 @@ done
 appid=dev.ridom.Luma
 if [ "$uninstall" = 1 ]; then
   rm -f "$prefix/bin/luma" "$prefix/share/applications/$appid.desktop" "$prefix/share/metainfo/$appid.metainfo.xml"
-  (cd "$here/share/icons" && find hicolor -type f -name '*.svg' -exec rm -f "$prefix/share/icons/{}" \;)
+  (cd "$here/share/icons" && find hicolor -type f \( -name '*.svg' -o -name '*.png' \) -exec rm -f "$prefix/share/icons/{}" \;)
   rm -rf "$prefix/share/doc/luma" "$prefix/share/licenses/luma"
   echo "Luma removed from $prefix"
 else

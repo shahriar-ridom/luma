@@ -56,6 +56,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/dev.ridom.Luma.deskto
 %{_datadir}/applications/dev.ridom.Luma.desktop
 %{_datadir}/metainfo/dev.ridom.Luma.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/*
+%{_datadir}/icons/hicolor/256x256/*
 %doc %{_docdir}/luma
 %license %{_datadir}/licenses/luma/LICENSE
 
