@@ -21,7 +21,7 @@ jobs:
     name: Check versions
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Versions agree with the tag
         run: |
           if [ "${GITHUB_REF_TYPE}" = tag ]; then tools/check-version.sh "${GITHUB_REF_NAME}"; else tools/check-version.sh; fi
@@ -37,7 +37,7 @@ jobs:
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           # shellcheck disable=SC2086
           sudo apt-get update && sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS
@@ -62,7 +62,7 @@ jobs:
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           # shellcheck disable=SC2086
           sudo apt-get update && sudo apt-get install -y --no-install-recommends $UBUNTU_DEPS
@@ -94,7 +94,7 @@ jobs:
           - { arch: x86_64, runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install build and bundling dependencies
         run: |
           sudo apt-get update
@@ -119,7 +119,7 @@ jobs:
     steps:
       - name: Install build tools
         run: pacman -Syu --noconfirm base-devel git rust gtk4 libadwaita sqlite libarchive shared-mime-info
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build with makepkg
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -145,7 +145,7 @@ jobs:
           dnf install -y rpm-build git tar gzip gcc make rust cargo pkgconf-pkg-config \
             'pkgconfig(gtk4)' 'pkgconfig(libadwaita-1)' 'pkgconfig(sqlite3)' \
             desktop-file-utils libappstream-glib bsdtar shared-mime-info
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build with rpmbuild
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -169,7 +169,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           path: dist

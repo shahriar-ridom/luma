@@ -24,7 +24,7 @@ jobs:
     name: Format and lint
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system libraries
         run: |
           # shellcheck disable=SC2086
@@ -40,7 +40,7 @@ jobs:
     name: Test (Ubuntu 24.04)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system libraries
         run: |
           # shellcheck disable=SC2086
@@ -71,7 +71,7 @@ jobs:
     steps:
       - name: Install system libraries
         run: ${{ matrix.setup }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
@@ -83,7 +83,7 @@ jobs:
     name: Packaging metadata
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install validators
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends desktop-file-utils appstream shellcheck
       - name: Desktop entry
@@ -103,7 +103,7 @@ jobs:
       contents: read
       checks: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
