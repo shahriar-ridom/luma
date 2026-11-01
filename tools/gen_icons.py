@@ -157,4 +157,11 @@ write("apps", "dev.ridom.Luma", '<svg xmlns="http://www.w3.org/2000/svg" width="
       '<path d="M26 44a8 8 0 0 1 8-8h22.5a6 6 0 0 1 4.6 2.1l5.4 6.4H94a8 8 0 0 1 8 8v8H26z" fill="url(#back)"/>'
       '<path d="M26 56a8 8 0 0 1 8-8h60a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8H34a8 8 0 0 1-8-8z" fill="url(#front)"/>'
       '<path d="M96 14l2.6 8.4L107 25l-8.4 2.6L96 36l-2.6-8.4L85 25l8.4-2.6z" fill="#ffffff"/></svg>\n')
+# AppImage's appimagetool and some desktops need a raster icon.
+import shutil, subprocess
+if shutil.which("rsvg-convert"):
+    png = os.path.join(ROOT, "..", "256x256", "apps")
+    os.makedirs(png, exist_ok=True)
+    subprocess.run(["rsvg-convert", "-w", "256", "-h", "256", os.path.join(ROOT, "apps", "dev.ridom.Luma.svg"),
+                    "-o", os.path.join(png, "dev.ridom.Luma.png")], check=True)
 print("icons written to", os.path.abspath(ROOT))
