@@ -151,9 +151,9 @@ impl WinCtl {
         };
         let nav_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         nav_box.add_css_class("fm-seg");
-        nav_box.append(&mk_btn("fm-back-symbolic", "Back", "win.back"));
-        nav_box.append(&mk_btn("fm-forward-symbolic", "Forward", "win.forward"));
-        nav_box.append(&mk_btn("fm-up-symbolic", "Parent folder", "win.parent"));
+        nav_box.append(&mk_btn("luma-back-symbolic", "Back", "win.back"));
+        nav_box.append(&mk_btn("luma-forward-symbolic", "Forward", "win.forward"));
+        nav_box.append(&mk_btn("luma-up-symbolic", "Parent folder", "win.parent"));
 
         let mk_view = |icon: &str, tip: &str| {
             let b = gtk::ToggleButton::new();
@@ -162,10 +162,10 @@ impl WinCtl {
             b
         };
         let view_btns = vec![
-            mk_view("fm-view-grid-symbolic", "Icons"),
-            mk_view("fm-view-list-symbolic", "List"),
-            mk_view("fm-view-columns-symbolic", "Columns"),
-            mk_view("fm-view-gallery-symbolic", "Gallery"),
+            mk_view("luma-view-grid-symbolic", "Icons"),
+            mk_view("luma-view-list-symbolic", "List"),
+            mk_view("luma-view-columns-symbolic", "Columns"),
+            mk_view("luma-view-gallery-symbolic", "Gallery"),
         ];
         for b in &view_btns[1..] {
             b.set_group(Some(&view_btns[0]));
@@ -181,7 +181,7 @@ impl WinCtl {
         let sort_dd = gtk::DropDown::from_strings(&labels);
         sort_dd.set_tooltip_text(Some("Sort by"));
         let sort_dir = gtk::ToggleButton::new();
-        sort_dir.set_icon_name("fm-sort-asc-symbolic");
+        sort_dir.set_icon_name("luma-sort-asc-symbolic");
         sort_dir.set_tooltip_text(Some("Reverse sort order"));
         let sort_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         sort_dd.set_hexpand(true);
@@ -200,7 +200,7 @@ impl WinCtl {
 
         // One tidy "View options" popover instead of a row of toolbar controls.
         let options_btn = gtk::MenuButton::new();
-        options_btn.set_icon_name("fm-options-symbolic");
+        options_btn.set_icon_name("luma-options-symbolic");
         options_btn.set_tooltip_text(Some("View options"));
         let sort_title = gtk::Label::new(Some("Sort by"));
         sort_title.set_xalign(0.0);
@@ -220,13 +220,13 @@ impl WinCtl {
         options_btn.set_popover(Some(&opts_pop));
 
         let recent_btn = gtk::MenuButton::new();
-        recent_btn.set_icon_name("fm-history-symbolic");
+        recent_btn.set_icon_name("luma-history-symbolic");
         recent_btn.set_tooltip_text(Some("Recent folders and files"));
 
         let sidebar_btn = gtk::ToggleButton::new();
-        sidebar_btn.set_icon_name("fm-sidebar-symbolic");
+        sidebar_btn.set_icon_name("luma-sidebar-symbolic");
         sidebar_btn.set_tooltip_text(Some("Toggle sidebar"));
-        let preview_btn = gtk::Button::from_icon_name("fm-eye-symbolic");
+        let preview_btn = gtk::Button::from_icon_name("luma-eye-symbolic");
         preview_btn.set_tooltip_text(Some("Quick Look (Space)"));
         preview_btn.set_action_name(Some("win.quick-preview"));
 
@@ -259,7 +259,7 @@ impl WinCtl {
         s2.append(Some("About"), Some("win.about"));
         main_menu.append_section(None, &s2);
         let menu_btn = gtk::MenuButton::new();
-        menu_btn.set_icon_name("fm-more-symbolic");
+        menu_btn.set_icon_name("luma-more-symbolic");
         menu_btn.set_menu_model(Some(&main_menu));
 
         let title = adw::WindowTitle::new("", "");
@@ -511,9 +511,9 @@ impl WinCtl {
                 p.set_sort(SortKey::ALL[c.sort_dd.selected() as usize], !c.sort_dir.is_active());
             }
             c.sort_dir.set_icon_name(if c.sort_dir.is_active() {
-                "fm-sort-desc-symbolic"
+                "luma-sort-desc-symbolic"
             } else {
-                "fm-sort-asc-symbolic"
+                "luma-sort-asc-symbolic"
             });
         };
         let a = apply_sort.clone();
@@ -656,7 +656,7 @@ impl WinCtl {
         let split = SplitView::new();
         let page = self.tabs.append(&split.widget);
         page.set_title(&dir_title(&path));
-        page.set_icon(Some(&gio::ThemedIcon::new("fm-folder")));
+        page.set_icon(Some(&gio::ThemedIcon::new("luma-folder")));
         let tab =
             Rc::new(Tab { page: page.clone(), split, panes: RefCell::new(vec![pane.clone()]), active: Cell::new(0) });
         tab.relayout();
@@ -942,7 +942,7 @@ impl WinCtl {
             "about" => {
                 if let Some(win) = self.win.upgrade() {
                     let about = adw::AboutDialog::new();
-                    about.set_application_name("File Manager");
+                    about.set_application_name("Luma");
                     about.set_application_icon(crate::application::app::APP_ID);
                     about.set_version(env!("CARGO_PKG_VERSION"));
                     about.set_comments("Design beautifully. Navigate effortlessly. Manage everything.");
@@ -1082,7 +1082,7 @@ impl WinCtl {
         let (key, asc) = p.sort();
         self.sort_dd.set_selected(SortKey::ALL.iter().position(|k| *k == key).unwrap_or(0) as u32);
         self.sort_dir.set_active(!asc);
-        self.sort_dir.set_icon_name(if asc { "fm-sort-asc-symbolic" } else { "fm-sort-desc-symbolic" });
+        self.sort_dir.set_icon_name(if asc { "luma-sort-asc-symbolic" } else { "luma-sort-desc-symbolic" });
         self.hidden_btn.set_active(p.hidden());
         if self.search.text() != p.query() {
             self.search.set_text(&p.query());

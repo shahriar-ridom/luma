@@ -25,10 +25,10 @@ if command -v bsdtar >/dev/null 2>&1; then extra+=(--executable "$(command -v bs
 export DEPLOY_GTK_VERSION=4 VERSION="$ver" APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch"
 export PATH="$PWD/$work:$PATH"
 (cd "$work" && ./linuxdeploy --appdir AppDir \
-  --executable AppDir/usr/bin/file-manager \
-  --desktop-file AppDir/usr/share/applications/dev.filemanager.FileManager.desktop \
-  --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/dev.filemanager.FileManager.svg \
+  --executable AppDir/usr/bin/luma \
+  --desktop-file AppDir/usr/share/applications/dev.ridom.Luma.desktop \
+  --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/dev.ridom.Luma.svg \
   "${extra[@]}" --plugin gtk --output appimage)
 
-mv "$work"/*.AppImage "$out/file-manager-$ver-$arch.AppImage"
-echo "$out/file-manager-$ver-$arch.AppImage"
+mv "$work"/*.AppImage "$out/luma-$ver-$arch.AppImage"
+echo "$out/luma-$ver-$arch.AppImage"

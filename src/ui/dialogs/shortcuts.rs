@@ -44,7 +44,7 @@ pub fn show(parent: &gtk::Window, state: Rc<AppState>, on_change: Rc<dyn Fn()>) 
         row.set_title(def.label);
         let btn = gtk::Button::new();
         btn.set_valign(gtk::Align::Center);
-        let reset = gtk::Button::from_icon_name("fm-undo-symbolic");
+        let reset = gtk::Button::from_icon_name("luma-undo-symbolic");
         reset.set_tooltip_text(Some("Reset to default"));
         reset.set_valign(gtk::Align::Center);
         reset.add_css_class("flat");

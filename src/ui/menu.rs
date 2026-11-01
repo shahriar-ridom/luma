@@ -55,7 +55,7 @@ fn fill(page: &gtk::Box, model: &gio::MenuModel, pop: &gtk::Popover, accel_of: &
         btn.add_css_class("fm-menu-item");
 
         if let Some(sub) = model.item_link(i, "submenu") {
-            let chev = gtk::Image::from_icon_name("fm-forward-symbolic");
+            let chev = gtk::Image::from_icon_name("luma-forward-symbolic");
             chev.set_pixel_size(11);
             chev.add_css_class("fm-chev");
             row.append(&chev);

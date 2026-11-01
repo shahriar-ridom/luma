@@ -35,7 +35,7 @@ impl Breadcrumb {
         let last = parts.len() - 1;
         for (i, (name, p)) in parts.into_iter().enumerate() {
             if i > 0 {
-                let sep = gtk::Image::from_icon_name("fm-forward-symbolic");
+                let sep = gtk::Image::from_icon_name("luma-forward-symbolic");
                 sep.set_pixel_size(10);
                 sep.add_css_class("fm-crumb-sep");
                 self.row.append(&sep);

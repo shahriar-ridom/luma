@@ -1,14 +1,14 @@
-# Maintainer: File Manager contributors <noreply@example.com>
+# Maintainer: Luma contributors <info@ridom.dev>
 #
-# Local/CI build: place file-manager-$pkgver.tar.gz (tools/make-source-tarball.sh) next to this file.
+# Local/CI build: place luma-$pkgver.tar.gz (tools/make-source-tarball.sh) next to this file.
 # For the AUR, replace `source` with the release tarball URL and set a real checksum.
-pkgname=file-manager
+pkgname=luma
 pkgver=0.1.0
 pkgrel=1
 pkgdesc='A fast, native GTK4/libadwaita file manager'
 arch=('x86_64' 'aarch64')
-url='https://github.com/shahriar-ridom/luma.git'
-license=('GPL-3.0-or-later')
+url='https://github.com/shahriar-ridom/luma'
+license=('GPL-3.0-only')
 depends=('gtk4' 'libadwaita' 'sqlite' 'libarchive' 'shared-mime-info')
 makedepends=('cargo')
 options=('!debug')

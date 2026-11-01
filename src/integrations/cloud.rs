@@ -24,7 +24,7 @@ pub struct Remote {
 /// Where drives are mounted. Content search and thumbnails skip this tree so
 /// browsing never triggers mass downloads.
 pub fn base_dir() -> PathBuf {
-    gtk::glib::user_data_dir().join("file-manager").join("cloud")
+    gtk::glib::user_data_dir().join("luma").join("cloud")
 }
 
 pub fn mount_point(name: &str) -> PathBuf {
@@ -209,13 +209,10 @@ mod tests {
 
     #[test]
     fn detects_mount_from_mountinfo() {
-        let t = "50 1 0:45 / /home/me/.local/share/file-manager/cloud/g rw,nosuid - fuse.rclone g: rw,user_id=1000\n";
-        assert!(is_mounted_in(t, Path::new("/home/me/.local/share/file-manager/cloud/g")));
-        assert!(!is_mounted_in(t, Path::new("/home/me/.local/share/file-manager/cloud/other")));
-        let plain = "50 1 0:45 / /home/me/.local/share/file-manager/cloud/g rw - ext4 /dev/sda1 rw\n";
-        assert!(
-            !is_mounted_in(plain, Path::new("/home/me/.local/share/file-manager/cloud/g")),
-            "must be an rclone mount"
-        );
+        let t = "50 1 0:45 / /home/me/.local/share/luma/cloud/g rw,nosuid - fuse.rclone g: rw,user_id=1000\n";
+        assert!(is_mounted_in(t, Path::new("/home/me/.local/share/luma/cloud/g")));
+        assert!(!is_mounted_in(t, Path::new("/home/me/.local/share/luma/cloud/other")));
+        let plain = "50 1 0:45 / /home/me/.local/share/luma/cloud/g rw - ext4 /dev/sda1 rw\n";
+        assert!(!is_mounted_in(plain, Path::new("/home/me/.local/share/luma/cloud/g")), "must be an rclone mount");
     }
 }

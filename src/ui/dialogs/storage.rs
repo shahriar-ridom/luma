@@ -96,7 +96,7 @@ impl UsageView {
         sw.set_child(Some(&list));
         sw.set_vexpand(true);
 
-        let up = gtk::Button::from_icon_name("fm-up-symbolic");
+        let up = gtk::Button::from_icon_name("luma-up-symbolic");
         up.set_tooltip_text(Some("Parent folder"));
         let title = gtk::Label::new(None);
         title.set_xalign(0.0);
@@ -306,7 +306,7 @@ fn drives_page(parent: &gtk::Window, on_open: Rc<dyn Fn(PathBuf)>, dialog: &adw:
                 row.add_suffix(&open);
             }
             if d.mount.can_unmount() || d.mount.can_eject() {
-                let eject = gtk::Button::from_icon_name("fm-eject-symbolic");
+                let eject = gtk::Button::from_icon_name("luma-eject-symbolic");
                 eject.add_css_class("flat");
                 eject.set_valign(gtk::Align::Center);
                 eject.set_tooltip_text(Some(if d.mount.can_eject() { "Eject" } else { "Unmount" }));
@@ -342,9 +342,9 @@ pub fn show(parent: &gtk::Window, folder: PathBuf, on_open: Rc<dyn Fn(PathBuf)>)
     let dialog = adw::Dialog::builder().title("Storage").content_width(720).content_height(580).child(&tv).build();
 
     let drives = drives_page(parent, on_open, &dialog);
-    stack.add_titled_with_icon(&drives, Some("drives"), "Drives", "fm-drive-symbolic");
+    stack.add_titled_with_icon(&drives, Some("drives"), "Drives", "luma-drive-symbolic");
     let usage = UsageView::new(folder.clone());
-    stack.add_titled_with_icon(&usage.widget, Some("usage"), "Folder Usage", "fm-folder-symbolic");
+    stack.add_titled_with_icon(&usage.widget, Some("usage"), "Folder Usage", "luma-folder-symbolic");
     usage.analyze(folder);
 
     let u = usage.clone();

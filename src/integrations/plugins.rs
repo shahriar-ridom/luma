@@ -263,7 +263,7 @@ fn safe_id(s: &str) -> bool {
 }
 
 pub fn user_plugin_dir() -> PathBuf {
-    gtk::glib::user_data_dir().join("file-manager").join("plugins")
+    gtk::glib::user_data_dir().join("luma").join("plugins")
 }
 
 fn load_manifest(dir: &Path) -> Result<Manifest, String> {

@@ -4,7 +4,7 @@ use gtk::{gio, glib};
 use crate::application::state::AppState;
 use crate::ui::window::FmWindow;
 
-pub const APP_ID: &str = "dev.filemanager.FileManager";
+pub const APP_ID: &str = "dev.ridom.Luma";
 
 pub fn run() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::HANDLES_OPEN).build();
@@ -30,7 +30,7 @@ pub fn run() -> glib::ExitCode {
             if first { activate_state.db.load_session().unwrap_or_default() } else { (vec![glib::home_dir()], 0) };
         FmWindow::new(app, activate_state.clone(), first, paths, active).present();
     });
-    // `file-manager /some/folder file.txt` and desktop-entry %U launches.
+    // `luma /some/folder file.txt` and desktop-entry %U launches.
     let st = state.clone();
     app.connect_open(move |app, files, _| {
         let paths: Vec<std::path::PathBuf> = files.iter().filter_map(|f| f.path()).collect();

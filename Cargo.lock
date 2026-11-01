@@ -197,30 +197,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "file-manager"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "gtk4",
- "include_dir",
- "kamadak-exif",
- "libadwaita",
- "lofty",
- "nix",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "shell-words",
- "similar",
- "thiserror",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -701,6 +677,30 @@ name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
+
+[[package]]
+name = "luma"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "gtk4",
+ "include_dir",
+ "kamadak-exif",
+ "libadwaita",
+ "lofty",
+ "nix",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "similar",
+ "thiserror",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "matchers"

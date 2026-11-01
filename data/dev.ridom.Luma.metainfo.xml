@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>dev.filemanager.FileManager</id>
+  <id>dev.ridom.Luma</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-3.0-or-later</project_license>
-  <name>File Manager</name>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Luma</name>
   <summary>A fast, native file manager for Linux</summary>
   <description>
     <p>
-      File Manager pairs a calm, Finder-like interface with the depth of a power-user file manager.
+      Luma pairs a calm, Finder-like interface with the depth of a power-user file manager.
       It is built on GTK 4 and libadwaita and works with Wayland and X11.
     </p>
     <ul>
@@ -20,13 +20,13 @@
     </ul>
   </description>
   <developer id="dev.filemanager">
-    <name>File Manager contributors</name>
+    <name>Luma contributors</name>
   </developer>
-  <url type="homepage">https://github.com/shahriar-ridom/luma.git</url>
-  <url type="bugtracker">https://github.com/shahriar-ridom/luma.git/issues</url>
-  <launchable type="desktop-id">dev.filemanager.FileManager.desktop</launchable>
+  <url type="homepage">https://github.com/shahriar-ridom/luma</url>
+  <url type="bugtracker">https://github.com/shahriar-ridom/luma/issues</url>
+  <launchable type="desktop-id">dev.ridom.Luma.desktop</launchable>
   <provides>
-    <binary>file-manager</binary>
+    <binary>luma</binary>
   </provides>
   <categories>
     <category>System</category>

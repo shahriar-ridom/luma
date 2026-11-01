@@ -65,7 +65,7 @@ pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>) {
 
     let page = adw::PreferencesPage::new();
     page.set_title("General");
-    page.set_icon_name(Some("fm-documents-symbolic"));
+    page.set_icon_name(Some("luma-documents-symbolic"));
     let group = adw::PreferencesGroup::new();
     page.add(&group);
     dialog.add(&page);
@@ -262,7 +262,7 @@ fn checksum_group(page: &adw::PreferencesPage, path: &Path, cancel: &Arc<AtomicB
 fn permissions_page(dialog: &adw::PreferencesDialog, path: &Path, md: &std::fs::Metadata, cancel: &Arc<AtomicBool>) {
     let page = adw::PreferencesPage::new();
     page.set_title("Permissions");
-    page.set_icon_name(Some("fm-lock-symbolic"));
+    page.set_icon_name(Some("luma-lock-symbolic"));
     let mode0 = md.mode() & 0o7777;
     let editable = permissions::can_chmod(md);
 

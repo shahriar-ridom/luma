@@ -87,9 +87,9 @@ jobs:
       - name: Install validators
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends desktop-file-utils appstream shellcheck
       - name: Desktop entry
-        run: desktop-file-validate data/dev.filemanager.FileManager.desktop
+        run: desktop-file-validate data/dev.ridom.Luma.desktop
       - name: AppStream metadata
-        run: appstreamcli validate --no-net data/dev.filemanager.FileManager.metainfo.xml
+        run: appstreamcli validate --no-net data/dev.ridom.Luma.metainfo.xml
       - name: Versions agree everywhere
         run: tools/check-version.sh
       - name: Shell scripts

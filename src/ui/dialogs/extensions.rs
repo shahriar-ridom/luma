@@ -69,7 +69,7 @@ pub fn show(parent: &gtk::Window, state: Rc<AppState>, on_change: Rc<dyn Fn()>) 
     // ---- custom actions page ----
     let actions_page = adw::PreferencesPage::new();
     actions_page.set_title("Actions");
-    actions_page.set_icon_name(Some("fm-bolt-symbolic"));
+    actions_page.set_icon_name(Some("luma-bolt-symbolic"));
     let actions_group = adw::PreferencesGroup::new();
     actions_group.set_title("Your actions");
     actions_group.set_description(Some("They appear under “Actions” in the right-click menu for matching files. Commands run directly, without a shell."));
@@ -82,7 +82,7 @@ pub fn show(parent: &gtk::Window, state: Rc<AppState>, on_change: Rc<dyn Fn()>) 
     // ---- plugins page ----
     let plugins_page = adw::PreferencesPage::new();
     plugins_page.set_title("Plugins");
-    plugins_page.set_icon_name(Some("fm-options-symbolic"));
+    plugins_page.set_icon_name(Some("luma-options-symbolic"));
     let info = adw::PreferencesGroup::new();
     info.set_description(Some(&format!(
         "A plugin is a folder containing plugin.toml. Install one into:\n{}\n\nPlugins run external programs only when you use one of their actions, or open Properties for a matching file. New plugins start switched off — read what they run before enabling.",
@@ -133,8 +133,8 @@ pub fn show(parent: &gtk::Window, state: Rc<AppState>, on_change: Rc<dyn Fn()>) 
                     if a.patterns.is_empty() { "any" } else { &a.patterns },
                     if a.wait { " · waits for result" } else { "" }
                 ));
-                let edit = gtk::Button::from_icon_name("fm-edit-symbolic");
-                let del = gtk::Button::from_icon_name("fm-trash-symbolic");
+                let edit = gtk::Button::from_icon_name("luma-edit-symbolic");
+                let del = gtk::Button::from_icon_name("luma-trash-symbolic");
                 for b in [&edit, &del] {
                     b.add_css_class("flat");
                     b.set_valign(gtk::Align::Center);

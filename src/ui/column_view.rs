@@ -117,7 +117,7 @@ impl MillerColumns {
                 icon.set_from_gicon(&i);
             }
             lbl.set_text(&info.display_name());
-            chev.set_icon_name(if is_dir(&info) { Some("fm-forward-symbolic") } else { None });
+            chev.set_icon_name(if is_dir(&info) { Some("luma-forward-symbolic") } else { None });
         });
         let lv = gtk::ListView::new(Some(sel.clone()), Some(f));
         lv.add_css_class("fm-miller");
