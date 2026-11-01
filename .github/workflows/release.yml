@@ -185,7 +185,7 @@ jobs:
           awk -v v="$ver" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release $ver" > notes.md
           cat notes.md
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
       - uses: softprops/action-gh-release@v2
