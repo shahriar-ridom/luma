@@ -1,7 +1,8 @@
-//! Operation manager UI: progress popover, conflict prompts, toasts, retry.
+//! Operation manager: runs file operations and background jobs, reports
+//! them in the activity island, asks about conflicts and keeps the undo
+//! journal in step. Short messages also go through the island.
 
-use adw::prelude::*;
-use gtk::{gio, glib};
+use gtk::{gio, glib, prelude::*};
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
@@ -16,8 +17,9 @@ use std::{
 
 use crate::application::state::AppState;
 use crate::core::operations::undo::UndoAction;
-use crate::core::operations::{self, Control, Event, OpKind, OpRequest, Progress, Resolution, Summary};
+use crate::core::operations::{self, Event, OpKind, OpRequest, Progress, Resolution, Summary};
 use crate::ui::dialogs;
+use crate::ui::island::{Island, Outcome, PauseFn};
 
 struct PendingConflict {
     src: String,
@@ -28,11 +30,11 @@ struct PendingConflict {
 struct Inner {
     state: Rc<AppState>,
     window: glib::WeakRef<gtk::Window>,
-    toasts: adw::ToastOverlay,
-    list: gtk::ListBox,
-    button: gtk::MenuButton,
+    island: Rc<Island>,
     conflicts: RefCell<VecDeque<PendingConflict>>,
     showing: Cell<bool>,
+    /// Called when an operation or job ends (files and free space changed).
+    on_settled: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 #[derive(Clone)]
@@ -42,46 +44,66 @@ fn plural(n: usize) -> String {
     if n == 1 { "1 item".into() } else { format!("{n} items") }
 }
 
+/// "Copy 3 items to “Photos”"
+fn op_title(req: &OpRequest) -> String {
+    let mut t = format!("{} {}", req.kind.verb(), plural(req.sources.len()));
+    if let (OpKind::Copy | OpKind::Move, Some(d)) = (req.kind, &req.dest) {
+        let n = gio::File::for_uri(d).basename().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        t.push_str(&format!(" to “{n}”"));
+    }
+    t
+}
+
+/// "1.2 GB of 3.4 GB · photo.jpg"
+fn status_text(p: &Progress) -> String {
+    let mut s = String::new();
+    if p.total_bytes > 0 {
+        s = format!(
+            "{} of {}",
+            crate::core::filesystem::human_size(p.done_bytes as i64),
+            crate::core::filesystem::human_size(p.total_bytes as i64)
+        );
+    } else if p.items_total > 0 {
+        s = format!("{} of {}", p.items_done, plural(p.items_total as usize));
+    }
+    if !p.current.is_empty() {
+        s = if s.is_empty() { p.current.clone() } else { format!("{s} · {}", p.current) };
+    }
+    s
+}
+
 impl OpsUi {
     pub fn new(window: &gtk::Window, state: Rc<AppState>) -> Self {
-        let list = gtk::ListBox::new();
-        list.set_selection_mode(gtk::SelectionMode::None);
-        list.add_css_class("boxed-list");
-        let sw = gtk::ScrolledWindow::new();
-        sw.set_child(Some(&list));
-        sw.set_propagate_natural_height(true);
-        sw.set_max_content_height(360);
-        sw.set_min_content_width(340);
-        let pop = gtk::Popover::new();
-        pop.set_child(Some(&sw));
-        let button = gtk::MenuButton::new();
-        button.set_icon_name("luma-activity-symbolic");
-        button.set_tooltip_text(Some("Operations"));
-        button.set_popover(Some(&pop));
-        button.set_visible(false);
+        let island = Island::new();
+        island.attach(window);
         Self(Rc::new(Inner {
             state,
             window: window.downgrade(),
-            toasts: adw::ToastOverlay::new(),
-            list,
-            button,
+            island,
             conflicts: RefCell::default(),
             showing: Cell::new(false),
+            on_settled: RefCell::default(),
         }))
     }
 
-    pub fn toasts(&self) -> &adw::ToastOverlay {
-        &self.0.toasts
-    }
-    pub fn button(&self) -> &gtk::MenuButton {
-        &self.0.button
-    }
-    pub fn toast(&self, msg: &str) {
-        self.0.toasts.add_toast(adw::Toast::new(msg));
+    pub fn island(&self) -> &Rc<Island> {
+        &self.0.island
     }
 
-    fn refresh_visibility(&self) {
-        self.0.button.set_visible(self.0.list.first_child().is_some());
+    pub fn set_on_settled(&self, f: impl Fn() + 'static) {
+        *self.0.on_settled.borrow_mut() = Some(Rc::new(f));
+    }
+
+    fn settled(&self) {
+        let cb = self.0.on_settled.borrow().clone();
+        if let Some(cb) = cb {
+            cb();
+        }
+    }
+
+    /// A short message, shown in the island.
+    pub fn toast(&self, msg: &str) {
+        self.0.island.message(msg);
     }
 
     fn pump_conflicts(&self) {
@@ -100,8 +122,9 @@ impl OpsUi {
         });
     }
 
-    /// Run a blocking job (archive, checksum, …) off the main thread with a
-    /// pulsing row and a cancel button. `done` runs on the main thread.
+    /// Run a blocking job (archive, checksum, …) off the main thread, shown
+    /// in the island with a cancel button. `done` runs on the main thread
+    /// and usually posts its own message.
     pub fn run_job<T: Send + 'static, E: Send + 'static>(
         &self,
         title: &str,
@@ -109,50 +132,24 @@ impl OpsUi {
         done: impl FnOnce(Result<T, E>) + 'static,
     ) {
         let cancel = Arc::new(AtomicBool::new(false));
-        let label = gtk::Label::new(Some(title));
-        label.set_xalign(0.0);
-        label.set_hexpand(true);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.add_css_class("heading");
-        let stop = gtk::Button::from_icon_name("luma-close-symbolic");
-        stop.add_css_class("flat");
-        stop.set_tooltip_text(Some("Cancel"));
-        let top = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        top.append(&label);
-        top.append(&stop);
-        let bar = gtk::ProgressBar::new();
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        v.set_margin_top(10);
-        v.set_margin_bottom(10);
-        v.set_margin_start(12);
-        v.set_margin_end(12);
-        v.append(&top);
-        v.append(&bar);
-        let row = gtk::ListBoxRow::new();
-        row.set_activatable(false);
-        row.set_selectable(false);
-        row.set_child(Some(&v));
-        self.0.list.append(&row);
-        self.refresh_visibility();
         let c = cancel.clone();
-        stop.connect_clicked(move |_| c.store(true, Ordering::Relaxed));
-
+        let id = self.0.island.add(title, Rc::new(move || c.store(true, Ordering::Relaxed)), None);
         let this = self.clone();
         glib::spawn_future_local(async move {
             let pulse = glib::timeout_add_local(Duration::from_millis(140), {
-                let bar = bar.clone();
+                let isl = this.0.island.clone();
                 move || {
-                    bar.pulse();
+                    isl.progress(id, None, "", None);
                     glib::ControlFlow::Continue
                 }
             });
             let res = gio::spawn_blocking(move || job(cancel)).await;
             pulse.remove();
-            this.0.list.remove(&row);
-            this.refresh_visibility();
+            this.0.island.finish(id, Outcome::Quiet);
+            this.settled();
             match res {
                 Ok(r) => done(r),
-                Err(_) => this.toast("A background task crashed"),
+                Err(_) => this.toast("A background task stopped unexpectedly"),
             }
         });
     }
@@ -160,24 +157,40 @@ impl OpsUi {
     pub fn submit(&self, req: OpRequest) {
         let started = std::time::Instant::now();
         let (ctl, rx) = operations::spawn(req.clone());
-        let row = OpRow::new(&req, &ctl);
-        self.0.list.append(&row.row);
-        self.refresh_visibility();
+        let c = ctl.clone();
+        let pause: Option<PauseFn> = matches!(req.kind, OpKind::Copy | OpKind::Move | OpKind::Delete).then(|| {
+            let c = ctl.clone();
+            Rc::new(move |on| c.set_paused(on)) as PauseFn
+        });
+        let id = self.0.island.add(&op_title(&req), Rc::new(move || c.cancel()), pause);
         let this = self.clone();
         glib::spawn_future_local(async move {
             while let Ok(ev) = rx.recv().await {
                 match ev {
-                    Event::Progress(p) => row.update(&p),
+                    Event::Progress(p) => {
+                        let known = p.total_bytes > 0 || p.items_total > 0;
+                        let bytes = (p.total_bytes > 0).then_some((p.done_bytes, p.total_bytes));
+                        this.0.island.progress(id, known.then(|| p.fraction()), &status_text(&p), bytes);
+                    }
                     Event::Conflict { src, dst, reply } => {
                         this.0.conflicts.borrow_mut().push_back(PendingConflict { src, dst, reply });
                         this.pump_conflicts();
                     }
                     Event::Finished(s) => {
-                        this.finished(&row, &req, s, started.elapsed());
-                        break;
+                        this.finished(id, &req, s, started.elapsed());
+                        return;
                     }
                 }
             }
+            // The worker went away without reporting.
+            this.0.island.finish(
+                id,
+                Outcome::Failed {
+                    title: format!("{} stopped", req.kind.verb()),
+                    detail: "The operation ended unexpectedly.".into(),
+                    retry: None,
+                },
+            );
         });
     }
 
@@ -248,161 +261,36 @@ impl OpsUi {
         app.send_notification(None, &n);
     }
 
-    fn finished(&self, row: &OpRow, req: &OpRequest, s: Summary, elapsed: Duration) {
+    fn finished(&self, id: u64, req: &OpRequest, s: Summary, elapsed: Duration) {
         self.record(req, &s);
+        self.settled();
         self.notify(req, &s, elapsed);
         let ok = req.sources.len() - s.failed_sources.len().min(req.sources.len());
         if s.errors.is_empty() {
-            self.0.list.remove(&row.row);
-            self.refresh_visibility();
-            self.toast(&if s.cancelled {
-                "Operation cancelled".to_string()
+            let outcome = if s.cancelled {
+                Outcome::Cancelled
             } else {
-                format!("{} {}", req.kind.past(), plural(ok))
-            });
+                Outcome::Done(format!("{} {}", req.kind.past(), plural(ok)))
+            };
+            self.0.island.finish(id, outcome);
             return;
         }
         let first = &s.errors[0];
         let name =
             gio::File::for_uri(&first.uri).basename().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut msg = format!("{name}: {}", first.message);
+        let mut detail = format!("{name}: {}", first.message);
         if s.errors.len() > 1 {
-            msg.push_str(&format!("\n…and {} more error(s)", s.errors.len() - 1));
+            detail.push_str(&format!("\nand {} more", plural(s.errors.len() - 1)));
         }
-        let this = self.clone();
-        let retry_req = (!s.failed_sources.is_empty() && !s.cancelled)
-            .then(|| OpRequest { sources: s.failed_sources.clone(), ..req.clone() });
-        let r2 = row.row.clone();
-        row.show_failure(
-            &format!("{} finished with {} error(s)", req.kind.verb(), s.errors.len()),
-            &msg,
-            retry_req.is_some(),
-            {
-                let this = this.clone();
-                move || {
-                    this.0.list.remove(&r2);
-                    this.refresh_visibility();
-                }
-            },
-            {
-                let this = this.clone();
-                let r3 = row.row.clone();
-                move || {
-                    this.0.list.remove(&r3);
-                    if let Some(r) = retry_req.clone() {
-                        this.submit(r);
-                    }
-                }
-            },
-        );
-        self.toast(&format!("{} error(s) — see Operations", s.errors.len()));
-        self.0.button.popup();
-    }
-}
-
-struct OpRow {
-    row: gtk::ListBoxRow,
-    title: gtk::Label,
-    bar: gtk::ProgressBar,
-    status: gtk::Label,
-    pause: gtk::ToggleButton,
-    cancel: gtk::Button,
-    retry: gtk::Button,
-}
-
-impl OpRow {
-    fn new(req: &OpRequest, ctl: &Control) -> Self {
-        let mut t = format!("{} {}", req.kind.verb(), plural(req.sources.len()));
-        if let (OpKind::Copy | OpKind::Move, Some(d)) = (req.kind, &req.dest) {
-            let n = gio::File::for_uri(d).basename().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            t.push_str(&format!(" to “{n}”"));
-        }
-        let title = gtk::Label::new(Some(&t));
-        title.set_xalign(0.0);
-        title.set_hexpand(true);
-        title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        title.add_css_class("heading");
-        let pause = gtk::ToggleButton::new();
-        pause.set_icon_name("luma-pause-symbolic");
-        pause.set_tooltip_text(Some("Pause / resume"));
-        pause.add_css_class("flat");
-        pause.set_visible(matches!(req.kind, OpKind::Copy | OpKind::Move | OpKind::Delete));
-        let cancel = gtk::Button::from_icon_name("luma-close-symbolic");
-        cancel.set_tooltip_text(Some("Cancel"));
-        cancel.add_css_class("flat");
-        let retry = gtk::Button::with_label("Retry");
-        retry.set_visible(false);
-        let top = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        top.append(&title);
-        top.append(&retry);
-        top.append(&pause);
-        top.append(&cancel);
-        let bar = gtk::ProgressBar::new();
-        let status = gtk::Label::new(Some("Preparing…"));
-        status.set_xalign(0.0);
-        status.set_wrap(true);
-        status.set_max_width_chars(48);
-        status.add_css_class("dim-label");
-        status.add_css_class("caption");
-        let v = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        {
-            let m = v.upcast_ref::<gtk::Widget>();
-            m.set_margin_top(10);
-            m.set_margin_bottom(10);
-            m.set_margin_start(12);
-            m.set_margin_end(12);
-        }
-        v.append(&top);
-        v.append(&bar);
-        v.append(&status);
-        let row = gtk::ListBoxRow::new();
-        row.set_activatable(false);
-        row.set_selectable(false);
-        row.set_child(Some(&v));
-
-        let c = ctl.clone();
-        pause.connect_toggled(move |b| c.set_paused(b.is_active()));
-        let c = ctl.clone();
-        cancel.connect_clicked(move |_| c.cancel());
-        Self { row, title, bar, status, pause, cancel, retry }
-    }
-
-    fn update(&self, p: &Progress) {
-        self.bar.set_fraction(p.fraction());
-        let mut s = String::new();
-        if p.total_bytes > 0 {
-            s = format!(
-                "{} of {}",
-                crate::core::filesystem::human_size(p.done_bytes as i64),
-                crate::core::filesystem::human_size(p.total_bytes as i64)
-            );
-        } else if p.items_total > 0 {
-            s = format!("{} of {}", p.items_done, plural(p.items_total as usize));
-        }
-        if !p.current.is_empty() {
-            s = format!("{s} · {}", p.current);
-        }
-        self.status.set_text(&s);
-    }
-
-    fn show_failure(
-        &self,
-        title: &str,
-        msg: &str,
-        can_retry: bool,
-        dismiss: impl Fn() + 'static,
-        retry: impl Fn() + 'static,
-    ) {
-        self.title.set_text(title);
-        self.bar.set_visible(false);
-        self.pause.set_visible(false);
-        self.status.set_text(msg);
-        self.status.remove_css_class("dim-label");
-        self.status.add_css_class("error");
-        self.cancel.set_icon_name("luma-close-symbolic");
-        self.cancel.set_tooltip_text(Some("Dismiss"));
-        self.retry.set_visible(can_retry);
-        self.cancel.connect_clicked(move |_| dismiss());
-        self.retry.connect_clicked(move |_| retry());
+        let retry = (!s.failed_sources.is_empty() && !s.cancelled).then(|| {
+            let (this, r) = (self.clone(), OpRequest { sources: s.failed_sources.clone(), ..req.clone() });
+            Rc::new(move || this.submit(r.clone())) as Rc<dyn Fn()>
+        });
+        let title = if s.errors.len() == 1 {
+            format!("{} failed for 1 item", req.kind.verb())
+        } else {
+            format!("{} failed for {} items", req.kind.verb(), s.errors.len())
+        };
+        self.0.island.finish(id, Outcome::Failed { title, detail, retry });
     }
 }

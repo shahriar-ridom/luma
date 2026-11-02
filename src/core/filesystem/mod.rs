@@ -122,10 +122,54 @@ pub fn human_size(bytes: i64) -> String {
     gtk::glib::format_size(bytes.max(0) as u64).to_string()
 }
 
+/// File-name order as people expect it: case-insensitive, and runs of digits
+/// compared by value, so "file2" sorts before "file10".
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return a.cmp(b), // equal ignoring case: fall back to a stable tie-break
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let run = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut s = String::new();
+                    while let Some(c) = it.next_if(char::is_ascii_digit) {
+                        s.push(c);
+                    }
+                    s
+                };
+                let (m, n) = (run(&mut x), run(&mut y));
+                let (mt, nt) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
+                let o = mt.len().cmp(&nt.len()).then_with(|| mt.cmp(nt)).then_with(|| m.len().cmp(&n.len()));
+                if o != Ordering::Equal {
+                    return o;
+                }
+            }
+            (Some(c), Some(d)) => {
+                let o = c.to_lowercase().cmp(d.to_lowercase());
+                if o != Ordering::Equal {
+                    return o;
+                }
+                x.next();
+                y.next();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn natural_order() {
+        let mut v = vec!["file10.txt", "File2.txt", "file1.txt", "file02.txt", "b", "A", "file2.txt"];
+        v.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(v, ["A", "b", "file1.txt", "File2.txt", "file2.txt", "file02.txt", "file10.txt"]);
+    }
 
     #[test]
     fn icon_names_by_type() {

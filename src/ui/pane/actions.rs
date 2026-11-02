@@ -20,6 +20,34 @@ impl Pane {
         self.list.selected_infos().into_iter().map(|i| d.join(i.name())).collect()
     }
 
+    /// Folders the Favorites actions apply to: the selected folders, or the
+    /// folder being shown when no folder is selected.
+    pub fn favorite_targets(&self) -> Vec<PathBuf> {
+        let Some(d) = self.cur_dir() else { return vec![] };
+        let dirs: Vec<PathBuf> =
+            self.list.selected_infos().iter().filter(|i| filesystem::is_dir(i)).map(|i| d.join(i.name())).collect();
+        if dirs.is_empty() { vec![d] } else { dirs }
+    }
+
+    /// (can add, can remove) for the current favorite targets.
+    fn favorite_state(&self, targets: &[PathBuf]) -> (bool, bool) {
+        let user: Vec<PathBuf> =
+            self.env.state.db.bookmarks().unwrap_or_default().into_iter().map(|b| b.path).collect();
+        let can_add = targets.iter().any(|t| !user.contains(t) && !crate::ui::sidebar::builtin_favorite(t));
+        let can_remove = targets.iter().any(|t| user.contains(t));
+        (can_add, can_remove)
+    }
+
+    fn append_favorite_items(&self, menu: &gio::Menu, targets: &[PathBuf]) {
+        let (add, remove) = self.favorite_state(targets);
+        if add {
+            menu.append(Some("Add to Favorites"), Some("win.bookmark-add"));
+        }
+        if remove {
+            menu.append(Some("Remove from Favorites"), Some("win.favorite-remove"));
+        }
+    }
+
     /// True when something is selected and every selected item is an archive.
     pub fn archive_selection(&self) -> bool {
         let infos = self.list.selected_infos();
@@ -157,9 +185,15 @@ impl Pane {
         clip.append(Some("Paste"), Some("win.paste"));
         clip.append(Some("Select All"), Some("win.select-all"));
         menu.append_section(None, &clip);
+        if let Some(d) = self.cur_dir() {
+            let fav = gio::Menu::new();
+            self.append_favorite_items(&fav, &[d]);
+            if fav.n_items() > 0 {
+                menu.append_section(None, &fav);
+            }
+        }
         let more = gio::Menu::new();
         more.append(Some("Open Terminal Here"), Some("win.open-terminal"));
-        more.append(Some("Bookmark This Folder"), Some("win.bookmark-add"));
         more.append(Some("Find Duplicates…"), Some("win.find-duplicates"));
         if let Some(g) = self.git_menu(false) {
             more.append_submenu(Some("Git"), &g);
@@ -208,6 +242,13 @@ impl Pane {
         }
         pack.append(Some("Compress…"), Some("win.compress"));
         pack.append(Some("Tags…"), Some("win.tags"));
+        let dirs: Vec<PathBuf> = self
+            .cur_dir()
+            .map(|d| infos.iter().filter(|i| filesystem::is_dir(i)).map(|i| d.join(i.name())).collect())
+            .unwrap_or_default();
+        if !dirs.is_empty() {
+            self.append_favorite_items(&pack, &dirs);
+        }
         menu.append_section(None, &pack);
 
         let more = gio::Menu::new();
@@ -281,7 +322,7 @@ impl Pane {
         *self.pending_select.borrow_mut() = Some(name);
     }
 
-    pub(super) fn select_visible(&self, name: &str) {
+    pub fn select_visible(&self, name: &str) {
         if let Some(pos) = self.list.select_name(name) {
             self.grid.scroll_to(pos);
         }

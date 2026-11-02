@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::core::filesystem::{human_size, is_dir};
+use crate::core::filesystem::{human_size, is_dir, natural_cmp};
 use crate::ui::interact::{self, ItemCtx};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -38,7 +38,9 @@ struct FilterState {
 /// view. The sorter lives on the list view's columns so header clicks and the
 /// toolbar sort menu stay in sync; the grid view reuses the same selection.
 pub struct FileList {
-    pub widget: gtk::ScrolledWindow,
+    /// The list, inside a breakpoint bin so its columns adapt to the pane's
+    /// own width (split view halves it).
+    pub widget: adw::BreakpointBin,
     pub store: gio::ListStore,
     pub selection: gtk::MultiSelection,
     pub dir: Rc<RefCell<PathBuf>>,
@@ -50,18 +52,31 @@ pub struct FileList {
 }
 
 fn name_cmp(a: &gio::FileInfo, b: &gio::FileInfo) -> gtk::Ordering {
-    a.display_name().to_lowercase().cmp(&b.display_name().to_lowercase()).into()
+    natural_cmp(&a.display_name(), &b.display_name()).into()
 }
 
+/// Column sorter; ties fall back to the name so equal sizes/kinds stay ordered.
 fn sorter(f: impl Fn(&gio::FileInfo, &gio::FileInfo) -> gtk::Ordering + 'static) -> gtk::CustomSorter {
     gtk::CustomSorter::new(move |a, b| {
         let a = a.downcast_ref::<gio::FileInfo>().unwrap();
         let b = b.downcast_ref::<gio::FileInfo>().unwrap();
-        // Directories always first, regardless of direction of the column.
+        match f(a, b) {
+            gtk::Ordering::Equal => name_cmp(a, b),
+            o => o,
+        }
+    })
+}
+
+/// Folders before files. Kept outside the column sorter because the column
+/// view inverts its sorter for descending order, which would put folders last.
+fn dirs_first() -> gtk::CustomSorter {
+    gtk::CustomSorter::new(|a, b| {
+        let a = a.downcast_ref::<gio::FileInfo>().unwrap();
+        let b = b.downcast_ref::<gio::FileInfo>().unwrap();
         match (is_dir(a), is_dir(b)) {
             (true, false) => gtk::Ordering::Smaller,
             (false, true) => gtk::Ordering::Larger,
-            _ => f(a, b),
+            _ => gtk::Ordering::Equal,
         }
     })
 }
@@ -93,6 +108,26 @@ fn text_col(
     c.set_resizable(true);
     c.set_sorter(Some(&sorter));
     c
+}
+
+/// The name keeps at least ~220 px; as the pane narrows the other columns
+/// step out, least useful first: Kind (the icon already says it), then
+/// Size, then Modified. Thresholds are the columns' widths plus the name's
+/// minimum, so a column leaves just before it would squeeze the name.
+fn responsive_columns(bin: &adw::BreakpointBin, cols: &[gtk::ColumnViewColumn]) {
+    let [_, size, kind, modified] = cols else { return };
+    let bp = |max: u32, hide: &[&gtk::ColumnViewColumn]| {
+        let b =
+            adw::Breakpoint::new(adw::BreakpointCondition::parse(&format!("max-width: {max}px")).expect("breakpoint"));
+        for c in hide {
+            b.add_setter(*c, "visible", Some(&false.to_value()));
+        }
+        bin.add_breakpoint(b);
+    };
+    // Name 220 + Size 96 + Kind 190 + Modified 160 + row padding ≈ 700.
+    bp(700, &[kind]);
+    bp(510, &[kind, size]);
+    bp(380, &[kind, size, modified]);
 }
 
 impl FileList {
@@ -191,7 +226,12 @@ impl FileList {
             view.append_column(c);
         }
 
-        let sort_model = gtk::SortListModel::new(Some(filter_model.clone()), view.sorter());
+        let order = gtk::MultiSorter::new();
+        order.append(dirs_first());
+        if let Some(s) = view.sorter() {
+            order.append(s);
+        }
+        let sort_model = gtk::SortListModel::new(Some(filter_model.clone()), Some(order));
         let selection = gtk::MultiSelection::new(Some(sort_model));
         let _ = ctx.selection.set(selection.clone());
         view.set_model(Some(&selection));
@@ -203,10 +243,17 @@ impl FileList {
             }
         });
 
-        let widget = gtk::ScrolledWindow::new();
-        widget.set_child(Some(&view));
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_child(Some(&view));
+        scroller.set_hexpand(true);
+        scroller.set_vexpand(true);
+        let widget = adw::BreakpointBin::new();
+        widget.set_child(Some(&scroller));
+        // A breakpoint bin needs an explicit minimum size.
+        widget.set_size_request(200, 120);
         widget.set_hexpand(true);
         widget.set_vexpand(true);
+        responsive_columns(&widget, &cols);
         Self { widget, store, selection, view, cols, filter, filter_model, state, dir: ctx.dir.clone() }
     }
 

@@ -28,9 +28,14 @@ impl Breadcrumb {
         }
         let mut acc = PathBuf::from("/");
         let mut parts: Vec<(String, PathBuf)> = vec![("/".into(), acc.clone())];
-        for c in path.components().skip(1) {
-            acc.push(c);
-            parts.push((c.as_os_str().to_string_lossy().into_owned(), acc.clone()));
+        if crate::core::operations::trash::is_trash(path) {
+            // Not a real folder: one crumb.
+            parts = vec![("Trash".into(), path.to_path_buf())];
+        } else {
+            for c in path.components().skip(1) {
+                acc.push(c);
+                parts.push((c.as_os_str().to_string_lossy().into_owned(), acc.clone()));
+            }
         }
         let last = parts.len() - 1;
         for (i, (name, p)) in parts.into_iter().enumerate() {

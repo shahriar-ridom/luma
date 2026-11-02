@@ -3,7 +3,7 @@
 # Local/CI build: place luma-$pkgver.tar.gz (tools/make-source-tarball.sh) next to this file.
 # For the AUR, replace `source` with the release tarball URL and set a real checksum.
 pkgname=luma
-pkgver=0.1.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='A fast, native GTK4/libadwaita file manager'
 arch=('x86_64' 'aarch64')

@@ -7,7 +7,14 @@ use crate::ui::window::FmWindow;
 pub const APP_ID: &str = "dev.ridom.Luma";
 
 pub fn run() -> glib::ExitCode {
-    let app = adw::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::HANDLES_OPEN).build();
+    #[allow(unused_mut)]
+    let mut flags = gio::ApplicationFlags::HANDLES_OPEN;
+    // Debug demos run beside a normal instance instead of handing off to it.
+    #[cfg(debug_assertions)]
+    if std::env::var("FM_ISLAND_DEMO").is_ok() {
+        flags |= gio::ApplicationFlags::NON_UNIQUE;
+    }
+    let app = adw::Application::builder().application_id(APP_ID).flags(flags).build();
     let state = AppState::open();
     app.connect_startup(move |_| {
         let css = gtk::CssProvider::new();

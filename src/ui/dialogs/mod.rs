@@ -5,6 +5,7 @@ pub mod compare;
 pub mod connect;
 pub mod duplicates;
 pub mod extensions;
+pub mod open_with;
 pub mod properties;
 pub mod search;
 pub mod shortcuts;
@@ -102,31 +103,59 @@ pub async fn confirm_delete(parent: &gtk::Window, count: usize, first_name: &str
     d.choose_future(Some(parent)).await == "delete"
 }
 
-/// Prompt for a file name. Returns `None` if cancelled or invalid.
-pub async fn prompt_name(parent: &gtk::Window, heading: &str, action: &str, initial: &str) -> Option<String> {
-    let d = adw::AlertDialog::new(Some(heading), None);
-    d.add_responses(&[("cancel", "Cancel"), ("ok", action)]);
-    d.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
-    d.set_default_response(Some("ok"));
-    d.set_close_response("cancel");
-    let entry = gtk::Entry::new();
-    entry.set_text(initial);
-    entry.set_activates_default(true);
-    let stem_len = match initial.rfind('.') {
-        Some(i) if i > 0 => initial[..i].chars().count() as i32,
-        _ => -1,
-    };
-    d.set_extra_child(Some(&entry));
-    let e = entry.clone();
-    glib::idle_add_local_once(move || {
-        e.grab_focus();
-        e.select_region(0, stem_len);
-    });
-    if d.choose_future(Some(parent)).await != "ok" {
-        return None;
+/// Why `name` can't be used as a file name, if it can't.
+pub fn invalid_name_reason(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        Some("The name can’t be empty.")
+    } else if name == "." || name == ".." {
+        Some("“.” and “..” are reserved names.")
+    } else if name.contains('/') {
+        Some("Names can’t contain “/”.")
+    } else if name.contains('\0') {
+        Some("Names can’t contain null characters.")
+    } else if name.len() > 255 {
+        Some("The name is too long.")
+    } else {
+        None
     }
-    let name = entry.text().trim().to_string();
-    (!name.is_empty() && name != "." && name != ".." && !name.contains('/')).then_some(name)
+}
+
+/// Prompt for a file name. Returns `None` if cancelled. An invalid name
+/// re-opens the prompt with the reason instead of being dropped silently.
+pub async fn prompt_name(parent: &gtk::Window, heading: &str, action: &str, initial: &str) -> Option<String> {
+    let mut text = initial.to_string();
+    let mut problem: Option<&str> = None;
+    loop {
+        let d = adw::AlertDialog::new(Some(heading), problem);
+        d.add_responses(&[("cancel", "Cancel"), ("ok", action)]);
+        d.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+        d.set_default_response(Some("ok"));
+        d.set_close_response("cancel");
+        let entry = gtk::Entry::new();
+        entry.set_text(&text);
+        entry.set_activates_default(true);
+        if problem.is_some() {
+            entry.add_css_class("error");
+        }
+        let stem_len = match text.rfind('.') {
+            Some(i) if i > 0 && problem.is_none() => text[..i].chars().count() as i32,
+            _ => -1,
+        };
+        d.set_extra_child(Some(&entry));
+        let e = entry.clone();
+        glib::idle_add_local_once(move || {
+            e.grab_focus();
+            e.select_region(0, stem_len);
+        });
+        if d.choose_future(Some(parent)).await != "ok" {
+            return None;
+        }
+        text = entry.text().trim().to_string();
+        match invalid_name_reason(&text) {
+            None => return Some(text),
+            Some(why) => problem = Some(why),
+        }
+    }
 }
 
 pub fn error(parent: &gtk::Window, heading: &str, body: &str) {
@@ -174,4 +203,18 @@ pub async fn prompt_text(parent: &gtk::Window, heading: &str, action: &str, hint
     let b = view.buffer();
     let t = b.text(&b.start_iter(), &b.end_iter(), false).trim().to_string();
     (!t.is_empty()).then_some(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::invalid_name_reason;
+
+    #[test]
+    fn name_validation() {
+        assert!(invalid_name_reason("report.txt").is_none());
+        assert!(invalid_name_reason(".hidden").is_none());
+        for bad in ["", ".", "..", "a/b", &"x".repeat(256)] {
+            assert!(invalid_name_reason(bad).is_some(), "{bad:?} should be rejected");
+        }
+    }
 }
