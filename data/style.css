@@ -13,6 +13,77 @@
 .fm-nav-back { animation: fm-slide-back 220ms cubic-bezier(.2, .8, .2, 1) both; }
 .fm-nav-fade { animation: fm-fade 140ms ease-out both; }
 
+/* ── Activity island ────────────────────────────────────────────────────
+   A small piece of the sheet floating up into the frame: same surface,
+   hairline and shadow as .fm-sheet. Pill when compact, the sheet's 14px
+   corners when it opens into a card. Always there: idle it shows the drive
+   (ring) and the folder; colour changes only to say something: accent while
+   working, success when done, error on failure, warning when the drive is
+   nearly full. Size and position are animated in code (island_layout.rs). */
+@keyframes fm-island-swap { from { opacity: 0; } to { opacity: 1; } }
+.fm-island {
+  background-color: @view_bg_color;
+  color: @view_fg_color;
+  border: 1px solid alpha(@window_fg_color, 0.09);
+  border-radius: 999px;
+  padding: 5px 10px;
+  box-shadow: 0 1px 2px alpha(black, 0.06), 0 8px 22px -12px alpha(black, 0.4);
+  transition: border-radius 240ms cubic-bezier(.2, .8, .2, 1), box-shadow 200ms ease, border-color 200ms ease;
+}
+.fm-island:hover { border-color: alpha(@window_fg_color, 0.16); }
+/* Same top padding as the pill so the top row doesn't move when it opens. */
+.fm-island.expanded {
+  border-radius: 14px;
+  padding: 5px 16px 16px 16px;
+  box-shadow: 0 1px 2px alpha(black, 0.06), 0 18px 40px -16px alpha(black, 0.5);
+}
+.fm-island.error { border-color: alpha(@error_color, 0.45); }
+.fm-island-text.fm-island-swap { animation: fm-island-swap 220ms ease-out both; }
+
+.fm-island-ring { color: @accent_color; transition: color 200ms ease; }
+.fm-island.idle .fm-island-ring { color: alpha(@view_fg_color, 0.55); }
+.fm-island.idle.low-space .fm-island-ring { color: @warning_color; }
+.fm-island.done .fm-island-ring { color: @success_color; }
+.fm-island.error .fm-island-ring { color: @error_color; }
+.fm-island.stopped .fm-island-ring { color: alpha(@view_fg_color, 0.5); }
+
+.fm-island-top { min-height: 22px; }
+.fm-island-title { font-weight: 600; font-size: 0.9em; }
+.fm-island.message .fm-island-title { font-weight: 500; }
+.fm-island-pct { font-size: 0.9em; font-weight: 600; font-feature-settings: "tnum"; color: @accent_color; }
+.fm-island.idle .fm-island-pct { font-weight: 500; color: alpha(@view_fg_color, 0.55); }
+.fm-island-details { margin-top: 14px; }
+.fm-island-op + .fm-island-op { border-top: 1px solid alpha(@window_fg_color, 0.07); padding-top: 14px; }
+.fm-island-op-title { font-weight: 600; }
+.fm-island-meta { font-size: 0.85em; font-feature-settings: "tnum"; color: alpha(@view_fg_color, 0.55); }
+.fm-island .failed .fm-island-op-title { color: @error_color; }
+.fm-island .failed .fm-island-meta { color: alpha(@view_fg_color, 0.75); }
+.fm-island scrolledwindow { background: transparent; }
+.fm-island button.circular { min-width: 26px; min-height: 26px; padding: 0; }
+.fm-island button.fm-island-action { min-height: 26px; padding: 0 12px; border-radius: 999px; font-weight: 600;
+  background-color: alpha(@accent_bg_color, 0.14); color: @accent_color; }
+.fm-island button.fm-island-action:hover { background-color: alpha(@accent_bg_color, 0.22); }
+.fm-island-bar trough, .fm-island-usage trough { background-color: alpha(@window_fg_color, 0.08); min-height: 4px; border-radius: 99px; border: none; box-shadow: none; }
+.fm-island-bar progress { background-color: @accent_bg_color; min-height: 4px; border-radius: 99px; }
+.fm-island-usage block.filled { background-color: alpha(@view_fg_color, 0.45); min-height: 4px; border-radius: 99px; }
+.fm-island-usage.low block.filled { background-color: @warning_color; }
+.fm-island-usage block.empty { background: transparent; min-height: 4px; }
+.fm-island-usage { margin: 4px 0 2px 0; }
+
+/* Header making room for the island: island_layout.rs generates per-control
+   transforms (shrink about the centre + slide toward the edge). Transforms
+   don't re-lay out the header, so this glides at sub-pixel precision. The
+   curve and length match the island's spring. */
+.fm-hdr-item { transition: transform 300ms cubic-bezier(.22, .9, .3, 1), opacity 220ms ease; }
+
+/* ── Trash ─────────────────────────────────────────────────────────── */
+.fm-trash-bar { padding: 8px 12px 6px 18px; }
+.fm-trash-note { font-size: 0.85em; color: alpha(@view_fg_color, 0.55); }
+.fm-trash-empty { border-radius: 999px; padding: 0 14px; min-height: 28px; font-weight: 600;
+  background-color: alpha(@error_bg_color, 0.14); color: @error_color; }
+.fm-trash-empty:hover { background-color: alpha(@error_bg_color, 0.22); }
+.fm-trash-empty:disabled { background-color: alpha(@view_fg_color, 0.05); color: alpha(@view_fg_color, 0.35); }
+
 /* ── Frame and sheet ────────────────────────────────────────────────── */
 window.fm-window { background-color: @window_bg_color; }
 
@@ -27,7 +98,7 @@ window.fm-window { background-color: @window_bg_color; }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 headerbar.fm-header { background: transparent; box-shadow: none; border: none; min-height: 50px; }
-headerbar.fm-header button { border-radius: 9px; min-width: 32px; min-height: 32px; transition: background-color 120ms ease, transform 90ms ease; }
+headerbar.fm-header button { border-radius: 9px; min-width: 32px; min-height: 32px; }
 headerbar.fm-header button:active { transform: scale(0.93); }
 
 /* Segmented groups: one soft pill, the active segment lifts out of it. */

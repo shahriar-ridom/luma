@@ -1,10 +1,14 @@
 //! macOS-style Quick Look: a small floating window previewing the selection.
-//! Space or Esc dismisses it; arrow keys move the selection underneath while
+//! Space, Esc or a click outside dismisses it; arrow keys move the selection underneath while
 //! it stays open; Return opens the file.
 
 use adw::prelude::*;
 use gtk::gdk;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use crate::ui::preview::{Preview, Target};
 
@@ -17,6 +21,8 @@ pub struct QuickLook {
     title: adw::WindowTitle,
     on_step: RefCell<Option<StepFn>>,
     on_open: RefCell<Option<OpenFn>>,
+    /// When a click outside last closed the window.
+    blurred_at: Cell<Option<Instant>>,
 }
 
 impl QuickLook {
@@ -43,7 +49,14 @@ impl QuickLook {
             .build();
         window.add_css_class("fm-quick-look");
 
-        let this = Rc::new(Self { window, preview, title, on_step: RefCell::default(), on_open: RefCell::default() });
+        let this = Rc::new(Self {
+            window,
+            preview,
+            title,
+            on_step: RefCell::default(),
+            on_open: RefCell::default(),
+            blurred_at: Cell::default(),
+        });
 
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -66,6 +79,22 @@ impl QuickLook {
                 q.open();
             }
         });
+        // A click in the main window (i.e. outside Quick Look) dismisses it.
+        // Watching clicks rather than focus: with focus-follows-mouse, merely
+        // moving the pointer off the window would otherwise close it.
+        let outside = gtk::GestureClick::new();
+        outside.set_button(0);
+        outside.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let w = Rc::downgrade(&this);
+        outside.connect_pressed(move |_, _, _, _| {
+            if let Some(q) = w.upgrade()
+                && q.is_visible()
+            {
+                q.blurred_at.set(Some(Instant::now()));
+                q.hide();
+            }
+        });
+        parent.add_controller(outside);
         // Release media decoders as soon as the window goes away, however it
         // was dismissed (Space, Esc, close button, window manager).
         let w = Rc::downgrade(&this);
@@ -104,6 +133,12 @@ impl QuickLook {
 
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()
+    }
+
+    /// True right after a click outside closed the window, so the click that
+    /// caused it (e.g. on the Quick Look button) doesn't reopen it.
+    pub fn just_dismissed(&self) -> bool {
+        self.blurred_at.get().is_some_and(|t| t.elapsed() < Duration::from_millis(400))
     }
 
     pub fn hide(&self) {

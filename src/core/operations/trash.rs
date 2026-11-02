@@ -1,4 +1,5 @@
-//! Freedesktop trash lookup and restore (used by Undo).
+//! Freedesktop trash: listing, restore, delete and empty (the Trash view),
+//! and lookup by original path (Undo).
 //!
 //! GIO can trash but cannot say where a file went, so for undo we read the
 //! spec'd layout directly: `<trash>/files/NAME` + `<trash>/info/NAME.trashinfo`.
@@ -94,6 +95,144 @@ pub fn find_anywhere(orig: &Path) -> Option<Trashed> {
         .find_map(|d| find(d, Some(&top), orig))
 }
 
+/// The path the Trash view lives at. Not a real folder: panes treat it as
+/// "show every trash".
+pub const TRASH_URI: &str = "trash:///";
+
+pub fn is_trash(p: &Path) -> bool {
+    p.as_os_str() == TRASH_URI
+}
+
+/// One trash directory and the volume top its `Path=` entries are relative to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrashDir {
+    pub dir: PathBuf,
+    pub topdir: Option<PathBuf>,
+}
+
+/// The home trash plus each mounted volume's own trash that exists
+/// (`$top/.Trash/$uid` or `$top/.Trash-$uid`), as the spec lays them out.
+pub fn trash_dirs() -> Vec<TrashDir> {
+    let mut out = vec![TrashDir { dir: gtk::glib::user_data_dir().join("Trash"), topdir: None }];
+    let uid = nix::unistd::Uid::current().as_raw();
+    let mut seen = std::collections::HashSet::new();
+    for m in crate::services::storage::proc_mounts() {
+        let top = PathBuf::from(&m.target);
+        if !seen.insert(top.clone()) {
+            continue;
+        }
+        for dir in [top.join(".Trash").join(uid.to_string()), top.join(format!(".Trash-{uid}"))] {
+            if dir.join("files").is_dir() && !out.iter().any(|t| t.dir == dir) {
+                out.push(TrashDir { dir, topdir: Some(top.clone()) });
+            }
+        }
+    }
+    out
+}
+
+/// A trashed item, for the Trash view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Item {
+    /// Where it sits now: `<trash>/files/NAME`.
+    pub file: PathBuf,
+    /// Its `.trashinfo` (may be missing for stray files).
+    pub info: PathBuf,
+    /// Where it came from (empty if unknown).
+    pub orig: PathBuf,
+    /// `YYYY-MM-DDThh:mm:ss`, local time, as written by the spec.
+    pub deleted: String,
+}
+
+impl Item {
+    /// Name as it was before deletion.
+    pub fn name(&self) -> String {
+        self.orig.file_name().or(self.file.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+}
+
+/// Everything in `t`, newest first.
+pub fn list(t: &TrashDir) -> Vec<Item> {
+    let Ok(rd) = fs::read_dir(t.dir.join("files")) else { return vec![] };
+    let mut items: Vec<Item> = rd
+        .flatten()
+        .map(|e| {
+            let file = e.path();
+            let mut info = t.dir.join("info").join(e.file_name());
+            info.as_mut_os_string().push(".trashinfo");
+            let (orig, deleted) = fs::read_to_string(&info)
+                .ok()
+                .and_then(|text| parse_info(&text))
+                .map(|(p, d)| {
+                    let full = match &t.topdir {
+                        Some(top) if !p.starts_with('/') => top.join(&p),
+                        _ => PathBuf::from(&p),
+                    };
+                    (full, d)
+                })
+                .unwrap_or_default();
+            Item { file, info, orig, deleted }
+        })
+        .collect();
+    items.sort_by(|a, b| b.deleted.cmp(&a.deleted));
+    items
+}
+
+/// Everything in every trash, newest first.
+pub fn list_all() -> Vec<Item> {
+    let mut all: Vec<Item> = trash_dirs().iter().flat_map(list).collect();
+    all.sort_by(|a, b| b.deleted.cmp(&a.deleted));
+    all
+}
+
+/// Put an item back where it came from (refuses to overwrite).
+pub fn restore_item(it: &Item) -> io::Result<()> {
+    if it.orig.as_os_str().is_empty() {
+        return Err(io::Error::other("its original location is unknown"));
+    }
+    if let Some(parent) = it.orig.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    restore(&Trashed { file: it.file.clone(), info: it.info.clone(), deleted: it.deleted.clone() }, &it.orig)
+}
+
+fn remove_any(p: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(p),
+        Ok(_) => fs::remove_file(p),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Delete an item for good, with its info file.
+pub fn delete_item(it: &Item) -> io::Result<()> {
+    remove_any(&it.file)?;
+    let _ = fs::remove_file(&it.info);
+    Ok(())
+}
+
+/// Delete everything in every trash. Stops early if `cancel` is set.
+/// Returns how many items were removed and the first error, if any.
+pub fn empty_all(cancel: &std::sync::atomic::AtomicBool) -> (usize, Option<io::Error>) {
+    let (mut n, mut first) = (0, None);
+    for it in list_all() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        match delete_item(&it) {
+            Ok(()) => n += 1,
+            Err(e) => {
+                first.get_or_insert(e);
+            }
+        }
+    }
+    // Spec cache of directory sizes; stale once emptied.
+    for t in trash_dirs() {
+        let _ = fs::remove_file(t.dir.join("directorysizes"));
+    }
+    (n, first)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +267,45 @@ mod tests {
         assert_eq!(fs::read_to_string(&orig).unwrap(), "new");
         assert!(!t.info.exists());
         assert!(find(&trash, None, &root.join("nope")).is_none());
+    }
+
+    #[test]
+    fn list_restore_and_delete_items() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/trash-list");
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join(".Trash-1000");
+        fs::create_dir_all(dir.join("files/folder")).unwrap();
+        fs::create_dir_all(dir.join("info")).unwrap();
+        fs::write(dir.join("files/a.txt"), "a").unwrap();
+        fs::write(dir.join("files/folder/inner"), "x").unwrap();
+        fs::write(dir.join("files/stray"), "s").unwrap();
+        // Per-volume trash: paths are relative to the volume top.
+        fs::write(
+            dir.join("info/a.txt.trashinfo"),
+            "[Trash Info]\nPath=docs/a.txt\nDeletionDate=2024-02-01T09:00:00\n",
+        )
+        .unwrap();
+        fs::write(dir.join("info/folder.trashinfo"), "[Trash Info]\nPath=folder\nDeletionDate=2024-03-01T09:00:00\n")
+            .unwrap();
+        let t = TrashDir { dir: dir.clone(), topdir: Some(root.clone()) };
+
+        let items = list(&t);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].orig, root.join("folder"), "newest first");
+        let a = items.iter().find(|i| i.name() == "a.txt").unwrap();
+        assert_eq!(a.orig, root.join("docs/a.txt"));
+        let stray = items.iter().find(|i| i.file.ends_with("stray")).unwrap();
+        assert!(stray.orig.as_os_str().is_empty());
+        assert!(restore_item(stray).is_err(), "unknown origin can't be restored");
+
+        restore_item(a).unwrap();
+        assert_eq!(fs::read_to_string(root.join("docs/a.txt")).unwrap(), "a");
+        assert!(!a.info.exists());
+
+        let folder = items.iter().find(|i| i.name() == "folder").unwrap();
+        delete_item(folder).unwrap();
+        assert!(!folder.file.exists() && !folder.info.exists());
+        assert_eq!(list(&t).len(), 1);
+        assert!(is_trash(Path::new(TRASH_URI)) && !is_trash(Path::new("/tmp")));
     }
 }

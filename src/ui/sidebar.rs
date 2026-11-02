@@ -52,6 +52,21 @@ pub struct Sidebar {
 
 type MenuItems = Vec<(String, Rc<dyn Fn()>)>;
 
+/// Folders always shown under Favorites (Home and the XDG user folders).
+pub fn builtin_favorite(path: &Path) -> bool {
+    path == glib::home_dir()
+        || [
+            UserDirectory::Desktop,
+            UserDirectory::Documents,
+            UserDirectory::Downloads,
+            UserDirectory::Pictures,
+            UserDirectory::Videos,
+            UserDirectory::Music,
+        ]
+        .into_iter()
+        .any(|d| glib::user_special_dir(d).is_some_and(|p| p == path))
+}
+
 impl Sidebar {
     pub fn new(
         state: Rc<AppState>,
@@ -363,7 +378,7 @@ impl Sidebar {
             let menu: MenuItems = vec![
                 ("Rename…".into(), Rc::new(move || Self::rename_bookmark(&w2, id, &old))),
                 (
-                    "Remove Bookmark".into(),
+                    "Remove from Favorites".into(),
                     Rc::new(move || {
                         if let Some(s) = weak.upgrade() {
                             let _ = s.state.db.remove_bookmark(id);
@@ -372,9 +387,23 @@ impl Sidebar {
                     }),
                 ),
             ];
-            self.add("Bookmarks", "luma-bookmark-symbolic", &b.name, t, p, None, menu);
+            // User-added favorites follow the built-in ones in the same section.
+            self.add("Favorites", "luma-folder-symbolic", &b.name, t, p, None, menu);
             self.make_reorderable(id);
         }
+
+        // Trash: every drive's deleted items. Dropping files here trashes them.
+        let trash = PathBuf::from(crate::core::operations::trash::TRASH_URI);
+        let w = self.me.clone();
+        let menu: MenuItems = vec![(
+            "Empty Trash…".into(),
+            Rc::new(move || {
+                if let Some(s) = w.upgrade() {
+                    let _ = s.widget.activate_action("win.empty-trash", None);
+                }
+            }),
+        )];
+        self.add("Favorites", "luma-trash-symbolic", "Trash", Target::Path(trash.clone()), Some(trash), None, menu);
 
         // Devices.
         let (t, p) = path(PathBuf::from("/"));
@@ -619,7 +648,7 @@ impl Sidebar {
         glib::spawn_future_local(async move {
             let Some(s) = w.upgrade() else { return };
             let Some(win) = s.window() else { return };
-            if let Some(n) = dialogs::prompt_name(&win, "Rename Bookmark", "Rename", &old).await {
+            if let Some(n) = dialogs::prompt_name(&win, "Rename Favorite", "Rename", &old).await {
                 let _ = s.state.db.rename_bookmark(id, &n);
                 s.rebuild();
             }
@@ -653,8 +682,21 @@ impl Sidebar {
         row.add_controller(dt);
     }
 
-    /// Bookmark `path` (name = folder name). Returns false if already present.
+    /// Remove a user-added favorite by path. Returns false if it wasn't one.
+    pub fn remove_favorite(&self, path: &Path) -> bool {
+        let Some(b) = self.state.db.bookmarks().unwrap_or_default().into_iter().find(|b| b.path == path) else {
+            return false;
+        };
+        let ok = self.state.db.remove_bookmark(b.id).is_ok();
+        self.rebuild();
+        ok
+    }
+
+    /// Add `path` to Favorites (name = folder name). Returns false if already there.
     pub fn add_bookmark(&self, path: &Path) -> bool {
+        if builtin_favorite(path) {
+            return false;
+        }
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
         let added = self.state.db.add_bookmark(&name, path).unwrap_or(false);
         if added {

@@ -86,11 +86,13 @@ impl Pane {
         }
     }
 
-    pub fn open_with(&self) {
-        let paths = self.selected_paths();
-        let Some(first) = paths.into_iter().find(|p| !p.is_dir()) else { return };
-        let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(&first)));
-        launcher.set_always_ask(true);
-        launcher.launch(self.window().as_ref(), gio::Cancellable::NONE, |_| {});
+    /// Pick an app for the first selected file; can also change the default.
+    pub fn open_with(self: &Rc<Self>) {
+        let Some(d) = self.cur_dir() else { return };
+        let Some(info) = self.list.selected_infos().into_iter().find(|i| !filesystem::is_dir(i)) else { return };
+        let path = d.join(info.name());
+        let ct = info.content_type().map(|c| c.to_string()).unwrap_or_else(|| "application/octet-stream".into());
+        let this = self.clone();
+        glib::spawn_future_local(async move { this.choose_app(path, ct, false).await });
     }
 }

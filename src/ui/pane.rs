@@ -15,6 +15,7 @@ use std::{
 use crate::application::state::AppState;
 use crate::core::filesystem::{self, LoadToken};
 use crate::core::navigation::History;
+use crate::core::operations::trash::{TRASH_URI, is_trash};
 use crate::core::operations::undo::UndoAction;
 use crate::core::operations::{OpKind, OpRequest};
 use crate::integrations::git::{FileState, RepoStatus};
@@ -74,6 +75,7 @@ pub struct Pane {
     /// Kept alive here; its signal handlers only hold weak references.
     _gallery: Rc<GalleryView>,
     columns: Rc<MillerColumns>,
+    trash_view: Rc<crate::ui::trash_view::TrashView>,
     stack: gtk::Stack,
     breadcrumb: Breadcrumb,
     path_stack: gtk::Stack,
@@ -96,6 +98,38 @@ pub struct Pane {
     git_gen: Cell<u64>,
     nav_anim: Cell<NavAnim>,
     me: Weak<Pane>,
+}
+
+/// Turn what was typed in the location bar into a path: `~` is the home
+/// folder, `file://` URIs are accepted, and relative paths are taken from `cwd`.
+fn resolve_location(text: &str, cwd: Option<&Path>) -> PathBuf {
+    let t = text.trim();
+    if t.starts_with("file://")
+        && let Some(p) = gio::File::for_uri(t).path()
+    {
+        return p;
+    }
+    let home = glib::home_dir;
+    let p = match t.strip_prefix('~') {
+        Some("") => home(),
+        Some(rest) if rest.starts_with('/') => home().join(rest.trim_start_matches('/')),
+        _ => PathBuf::from(t),
+    };
+    match cwd {
+        Some(c) if p.is_relative() => c.join(p),
+        _ => p,
+    }
+}
+
+/// Content type of a file, read off the main thread.
+async fn content_type_of(path: &Path) -> String {
+    let f = gio::File::for_path(path);
+    f.query_info_future("standard::content-type", gio::FileQueryInfoFlags::NONE, glib::Priority::DEFAULT)
+        .await
+        .ok()
+        .and_then(|i| i.content_type())
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| gio::content_type_guess(Some(path), None).0.to_string())
 }
 
 fn same_device(f: &gio::File, dest: &Path) -> bool {
@@ -161,6 +195,8 @@ impl Pane {
         stack.add_named(&list.widget, Some("list"));
         stack.add_named(&columns.widget, Some("column"));
         stack.add_named(&gallery.widget, Some("gallery"));
+        let trash_view = crate::ui::trash_view::TrashView::new(env.ops.clone(), env.window.clone());
+        stack.add_named(&trash_view.widget, Some("trash"));
         stack.set_visible_child_name("list");
         stack.set_vexpand(true);
 
@@ -178,6 +214,28 @@ impl Pane {
             }
         });
         stack.add_controller(bg);
+
+        // A click on empty space (not on an item) clears the selection, like
+        // other file managers. Ctrl/Shift keep it so rubberband can extend it.
+        let blank = gtk::GestureClick::new();
+        blank.set_button(0);
+        blank.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let w = weak.clone();
+        blank.connect_pressed(move |g, _, x, y| {
+            let Some(p) = w.upgrade() else { return };
+            if !matches!(p.view.borrow().as_str(), "list" | "grid") {
+                return;
+            }
+            let mods = g.current_event_state();
+            if mods.intersects(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK) {
+                return;
+            }
+            let hit = p.stack.pick(x, y, gtk::PickFlags::DEFAULT);
+            if hit.is_some_and(|h| matches!(h.css_name().as_str(), "listview" | "gridview")) {
+                p.list.selection.unselect_all();
+            }
+        });
+        stack.add_controller(blank);
         let w = weak.clone();
         stack.add_controller(interact::drop_target(ctx.on_drop.clone(), move || w.upgrade().and_then(|p| p.cur_dir())));
 
@@ -205,7 +263,7 @@ impl Pane {
         let w = weak.clone();
         path_entry.connect_activate(move |e| {
             let Some(p) = w.upgrade() else { return };
-            let path = PathBuf::from(e.text().as_str());
+            let path = resolve_location(e.text().as_str(), p.cur_dir().as_deref());
             if path.is_dir() {
                 p.navigate(path);
             } else {
@@ -216,11 +274,12 @@ impl Pane {
         });
         // Escape leaves the entry without navigating.
         let esc = gtk::EventControllerKey::new();
-        let (ps, pe) = (path_stack.clone(), path_entry.clone());
+        let w = weak.clone();
         esc.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Escape {
-                ps.set_visible_child_name("crumbs");
-                let _ = &pe;
+                if let Some(p) = w.upgrade() {
+                    p.leave_location();
+                }
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -237,6 +296,10 @@ impl Pane {
         status.set_margin_bottom(6);
         status.add_css_class("dim-label");
         status.add_css_class("fm-status");
+        // Status texts shrink with the pane (split view) instead of forcing
+        // the window wider than the screen.
+        status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        status.set_width_chars(6);
         let zoom = gtk::Scale::with_range(gtk::Orientation::Horizontal, MIN_ICON as f64, MAX_ICON as f64, 8.0);
         zoom.set_value(grid.icon_size() as f64);
         zoom.set_draw_value(false);
@@ -252,11 +315,23 @@ impl Pane {
         let free = gtk::Label::new(None);
         free.add_css_class("dim-label");
         free.add_css_class("fm-status");
+        free.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        free.set_width_chars(4);
         free.set_margin_end(12);
         let repo_label = gtk::Label::new(None);
         repo_label.add_css_class("fm-status");
+        repo_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        repo_label.set_width_chars(4);
         repo_label.set_margin_end(14);
         repo_label.set_visible(false);
+        // In the Trash, the status line is the Trash's summary.
+        let (st, w) = (status.clone(), weak.clone());
+        trash_view.set_on_summary(move |t| {
+            st.set_text(t);
+            if let Some(p) = w.upgrade() {
+                p.emit(PaneEvent::Status);
+            }
+        });
         let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         status_row.append(&status);
         status_row.append(&repo_label);
@@ -307,6 +382,7 @@ impl Pane {
             list,
             grid,
             _gallery: gallery,
+            trash_view,
             columns,
             stack,
             breadcrumb,
@@ -342,8 +418,27 @@ impl Pane {
 
     // ---- state accessors ---------------------------------------------------
 
+    /// The folder being shown. `None` in the Trash, which isn't a folder,
+    /// so file actions (new folder, paste, …) have nowhere to go there.
     pub fn cur_dir(&self) -> Option<PathBuf> {
+        self.location().filter(|p| !is_trash(p))
+    }
+    /// Where the pane is, including the Trash.
+    pub fn location(&self) -> Option<PathBuf> {
         self.history.borrow().current().map(Path::to_path_buf)
+    }
+    pub fn in_trash(&self) -> bool {
+        self.location().is_some_and(|p| is_trash(&p))
+    }
+    /// Re-read the Trash if it's showing (after deleting or restoring).
+    pub fn reload_trash(&self) {
+        if self.in_trash() {
+            self.trash_view.reload();
+        }
+    }
+    /// (items, bytes) in the Trash, as last listed.
+    pub fn trash_summary(&self) -> (usize, u64) {
+        self.trash_view.summary()
     }
     pub fn can_back(&self) -> bool {
         self.history.borrow().can_back()
@@ -369,9 +464,19 @@ impl Pane {
     pub fn selected_count(&self) -> u32 {
         self.list.selected_count()
     }
+    pub fn selection_infos(&self) -> Vec<gio::FileInfo> {
+        self.list.selected_infos()
+    }
+    pub fn visible_count(&self) -> u32 {
+        self.list.visible_count()
+    }
 
     pub fn set_view(&self, name: &str) {
         *self.view.borrow_mut() = name.to_string();
+        // The Trash keeps its own view; the choice applies when leaving it.
+        if self.in_trash() {
+            return;
+        }
         self.stack.set_visible_child_name(name);
         self.zoom.set_visible(name == "grid");
         self.ensure_gallery_selection();
@@ -419,6 +524,16 @@ impl Pane {
         self.path_stack.set_visible_child_name("entry");
         self.path_entry.grab_focus();
     }
+    /// Back to the breadcrumbs, dropping whatever was typed, focus to the files.
+    fn leave_location(&self) {
+        if let Some(d) = self.cur_dir() {
+            self.path_entry.set_text(&d.to_string_lossy());
+        }
+        self.path_stack.set_visible_child_name("crumbs");
+        if let Some(v) = self.stack.visible_child() {
+            v.child_focus(gtk::DirectionType::TabForward);
+        }
+    }
     pub fn select_all(&self) {
         self.list.selection.select_all();
     }
@@ -429,8 +544,16 @@ impl Pane {
     // ---- navigation --------------------------------------------------------
 
     pub fn navigate(self: &Rc<Self>, path: PathBuf) {
-        self.nav_anim.set(NavAnim::Forward);
+        self.navigate_with(path, NavAnim::Forward);
+    }
+
+    fn navigate_with(self: &Rc<Self>, path: PathBuf, anim: NavAnim) {
+        self.nav_anim.set(anim);
         self.history.borrow_mut().visit(path.clone());
+        if is_trash(&path) {
+            self.load(path);
+            return;
+        }
         if let Err(e) = self.env.state.db.record_location(&path) {
             tracing::debug!("recent location: {e:#}");
         }
@@ -439,7 +562,7 @@ impl Pane {
 
     pub fn refresh(self: &Rc<Self>) {
         self.nav_anim.set(NavAnim::Fade);
-        if let Some(c) = self.cur_dir() {
+        if let Some(c) = self.location() {
             self.load(c);
         }
     }
@@ -458,9 +581,8 @@ impl Pane {
         }
     }
     pub fn go_up(self: &Rc<Self>) {
-        self.nav_anim.set(NavAnim::Back);
         if let Some(p) = self.cur_dir().and_then(|c| c.parent().map(Path::to_path_buf)) {
-            self.navigate(p)
+            self.navigate_with(p, NavAnim::Back)
         }
     }
 
@@ -484,7 +606,36 @@ impl Pane {
         self.nav_anim.set(NavAnim::Fade);
     }
 
+    fn load_trash(self: &Rc<Self>) {
+        self.play_nav_animation();
+        let path = PathBuf::from(TRASH_URI);
+        self.path_entry.set_text("");
+        self.breadcrumb.set_path(&path);
+        self.path_stack.set_visible_child_name("crumbs");
+        if let Some(m) = self.monitor.take() {
+            m.cancel();
+        }
+        self.token.next(); // drop any folder load still running
+        self.list.store.remove_all();
+        self.stack.set_visible_child_name("trash");
+        self.zoom.set_visible(false);
+        self.free.set_text("");
+        self.repo_label.set_visible(false);
+        self.status.set_text("Loading…");
+        self.emit(PaneEvent::Navigated);
+        self.trash_view.reload();
+    }
+
     fn load(self: &Rc<Self>, path: PathBuf) {
+        if is_trash(&path) {
+            return self.load_trash();
+        }
+        // Coming back from the Trash: show the chosen view again.
+        let view = self.view.borrow().clone();
+        if self.stack.visible_child_name().as_deref() != Some(view.as_str()) {
+            self.stack.set_visible_child_name(&view);
+            self.zoom.set_visible(view == "grid");
+        }
         self.play_nav_animation();
         self.path_entry.set_text(&path.to_string_lossy());
         self.breadcrumb.set_path(&path);
@@ -629,8 +780,42 @@ impl Pane {
         if let Err(e) = self.env.state.db.record_file(path) {
             tracing::debug!("recent file: {e:#}");
         }
-        let f = gio::File::for_path(path);
-        gtk::FileLauncher::new(Some(&f)).launch(self.window().as_ref(), gio::Cancellable::NONE, |_| {});
+        let Some(me) = self.me.upgrade() else { return };
+        let path = path.to_path_buf();
+        glib::spawn_future_local(async move {
+            let ct = content_type_of(&path).await;
+            match gio::AppInfo::default_for_type(&ct, false) {
+                // A default exists: use it without asking.
+                Some(app) => {
+                    if let Err(e) = me.launch_with(&app, &path) {
+                        me.env.ops.toast(&format!("Could not open with {}: {}", app.display_name(), e.message()));
+                        me.choose_app(path, ct, false).await;
+                    }
+                }
+                // First time for this type: ask once, offering to remember the choice.
+                None => me.choose_app(path, ct, true).await,
+            }
+        });
+    }
+
+    fn launch_with(&self, app: &gio::AppInfo, path: &Path) -> Result<(), glib::Error> {
+        let ctx = self.window().map(|w| WidgetExt::display(&w).app_launch_context());
+        app.launch(&[gio::File::for_path(path)], ctx.as_ref())
+    }
+
+    /// Show the app chooser for `path`; remember the app as default if asked.
+    pub(crate) async fn choose_app(self: &Rc<Self>, path: PathBuf, ct: String, default_on: bool) {
+        let Some(win) = self.window() else { return };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let Some(choice) = dialogs::open_with::choose(&win, &name, &ct, default_on).await else { return };
+        if choice.make_default
+            && let Err(e) = choice.app.set_as_default_for_type(&ct)
+        {
+            self.env.ops.toast(&format!("Could not set the default app: {}", e.message()));
+        }
+        if let Err(e) = self.launch_with(&choice.app, &path) {
+            self.env.ops.toast(&format!("Could not open with {}: {}", choice.app.display_name(), e.message()));
+        }
     }
 
     /// Re-read tags for this folder; views are rebound only if something changed.
@@ -704,6 +889,17 @@ impl Pane {
     }
 
     fn handle_drop(&self, files: Vec<gio::File>, dest: PathBuf, copy: bool) {
+        // Dropped on the Trash: move them to the trash.
+        if is_trash(&dest) {
+            if !files.is_empty() {
+                self.env.ops.submit(OpRequest {
+                    kind: OpKind::Trash,
+                    sources: files.iter().map(|f| f.uri().to_string()).collect(),
+                    dest: None,
+                });
+            }
+            return;
+        }
         let dest_file = gio::File::for_path(&dest);
         let files: Vec<_> = files.into_iter().filter(|f| !f.equal(&dest_file)).collect();
         let kind = if !copy && files.iter().all(|f| same_device(f, &dest)) { OpKind::Move } else { OpKind::Copy };
@@ -795,5 +991,24 @@ impl Pane {
                 Err(e) => this.env.ops.toast(&format!("Could not create “{name}”: {}", e.message())),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_location;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn location_bar_paths() {
+        let home = gtk::glib::home_dir();
+        let cwd = Path::new("/srv/data");
+        assert_eq!(resolve_location("~", Some(cwd)), home);
+        assert_eq!(resolve_location(" ~/Documents ", Some(cwd)), home.join("Documents"));
+        assert_eq!(resolve_location("/etc", Some(cwd)), PathBuf::from("/etc"));
+        assert_eq!(resolve_location("sub/dir", Some(cwd)), cwd.join("sub/dir"));
+        assert_eq!(resolve_location("file:///tmp/a%20b", Some(cwd)), PathBuf::from("/tmp/a b"));
+        // "~user" is not expanded; it is just a relative name.
+        assert_eq!(resolve_location("~bob", Some(cwd)), cwd.join("~bob"));
     }
 }

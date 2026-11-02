@@ -117,7 +117,7 @@ To **uninstall**, remove it the way you installed it (`apt remove luma`, `pacman
 
 - **Many folders at once:** <kbd>Ctrl</kbd>+<kbd>T</kbd> opens a tab, <kbd>Ctrl</kbd>+<kbd>W</kbd> closes it, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> brings back the one you just closed.
 - **Two folders side by side:** press <kbd>F3</kbd> for **split view**. Each side has its own location, view and sorting.
-- **Bookmark a folder:** <kbd>Ctrl</kbd>+<kbd>D</kbd>. Right-click a bookmark to rename or remove it, or drag to reorder.
+- **Favorite folders:** right-click a folder (or empty space for the current folder) and choose **Add to Favorites**, or press <kbd>Ctrl</kbd>+<kbd>D</kbd>. Favorites appear in the sidebar under Home and your user folders. Right-click one to rename or remove it, or drag to reorder.
 - **Search:** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> searches by name (use `*` as a wildcard), by text *inside* files, by type, size and date, with or without subfolders.
 - **Show hidden files:** <kbd>Ctrl</kbd>+<kbd>H</kbd>.
 
@@ -125,8 +125,10 @@ To **uninstall**, remove it the way you installed it (`apt remove luma`, `pacman
 
 - **Copy / cut / paste:** <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd>. It even works with other apps like Nautilus or Dolphin.
 - **Drag and drop:** drop on a folder, on a sidebar entry, or on empty space. Dragging within a drive **moves**; between drives it **copies**. Hold <kbd>Ctrl</kbd> to always copy.
+- **The island:** the small pill in the middle of the title bar always tells you something. In your Home folder, at `/` or at the top of a drive, it shows the drive's free space, and the ring shows how full the drive is. Inside any other folder, it shows that folder's size, measured in the background, and the ring shows its share of the drive. Click it for the full path, a usage bar and a shortcut to **Disk Usage**. Select a file and it shows the file's name and size; click it for the kind and date and a **Properties** button. While anything is copying, moving, deleting or zipping, it switches to a live progress ring; click it for progress, speed, time left, and pause or cancel. When the work is done it says what happened ("Copied 24 items"). If something failed, it stays open with the reason and a **Retry** button. Short messages like "Path copied" show there too. When it needs more room, the title bar buttons shrink and slide toward the edges.
 - **If a file already exists**, Luma asks: *Replace*, *Skip*, *Keep Both*, or apply your choice to all (*Replace All* / *Skip All*). *Compare* shows which one is newer.
 - **Rename:** <kbd>F2</kbd>. **Select several files and press <kbd>F2</kbd>** to rename them all – find and replace, add a prefix or suffix, number them (`Holiday 01`, `Holiday 02`…) or change case, with a live preview.
+- **Trash:** click **Trash** under Favorites to see everything you've deleted, from every drive, with where it came from and when. Right-click an item to **Restore** it or delete it for good. Right-click **Trash** in the sidebar (or use the button at the top of the Trash) to **Empty Trash**. Dropping files on **Trash** moves them there.
 - **Delete:** <kbd>Delete</kbd> moves to the Trash. <kbd>Shift</kbd>+<kbd>Delete</kbd> deletes for good, after asking.
 - **Changed your mind?** <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
 - **Find duplicate files** and free up space: *⋯ menu → Find Duplicate Files…*. Luma only offers files that are genuinely identical, sends extras to the Trash, and always keeps one copy.
@@ -208,7 +210,7 @@ Luma also answers "show in folder" requests from browsers and chat apps (when no
 |---|---|---|---|
 | <kbd>Space</kbd> Quick Look | <kbd>F2</kbd> Rename | <kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo | <kbd>F3</kbd> Split view |
 | <kbd>Ctrl</kbd>+<kbd>T</kbd> New tab | <kbd>Ctrl</kbd>+<kbd>L</kbd> Type a path | <kbd>Ctrl</kbd>+<kbd>F</kbd> Filter | <kbd>F4</kbd> Terminal here |
-| <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>4</kbd> Views | <kbd>Ctrl</kbd>+<kbd>H</kbd> Hidden files | <kbd>Ctrl</kbd>+<kbd>D</kbd> Bookmark | <kbd>Alt</kbd>+<kbd>Enter</kbd> Properties |
+| <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>4</kbd> Views | <kbd>Ctrl</kbd>+<kbd>H</kbd> Hidden files | <kbd>Ctrl</kbd>+<kbd>D</kbd> Add to Favorites | <kbd>Alt</kbd>+<kbd>Enter</kbd> Properties |
 | <kbd>Alt</kbd>+<kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> Navigate | <kbd>Delete</kbd> Trash | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> New folder | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> Search |
 
 The [full list of shortcuts](docs/shortcuts.md) is also in the app under *⋯ menu → Keyboard Shortcuts*.

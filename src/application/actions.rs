@@ -51,7 +51,8 @@ pub const ACTIONS: &[ActionDef] = &[
     a("toggle-sidebar", "Toggle sidebar", "F9"),
     a("connect-server", "Connect to server", "<Control>k"),
     a("storage", "Storage and disk usage", ""),
-    a("bookmark-add", "Bookmark this folder", "<Control>d"),
+    a("bookmark-add", "Add folder to Favorites", "<Control>d"),
+    a("favorite-remove", "Remove folder from Favorites", ""),
     a("properties", "Properties", "<Alt>Return"),
     a("search", "Search files", "<Control><Shift>f"),
     a("compress", "Compress to archive", ""),
@@ -65,6 +66,7 @@ pub const ACTIONS: &[ActionDef] = &[
 /// Actions that exist but are not rebindable (menus, internal).
 pub const EXTRA_ACTIONS: &[&str] = &[
     "open",
+    "empty-trash",
     "open-with",
     "extensions",
     "git-stage",

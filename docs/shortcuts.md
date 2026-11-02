@@ -42,7 +42,7 @@ trigger while you are typing in a text box.
 | Toggle sidebar | `F9` |
 | Connect to server | `Ctrl+K` |
 | Storage and disk usage | — |
-| Bookmark this folder | `Ctrl+D` |
+| Add folder to Favorites | `Ctrl+D` |
 | Properties | `Alt+Enter` |
 | Search files | `Ctrl+Shift+F` |
 | Compress to archive | — |

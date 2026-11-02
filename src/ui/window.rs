@@ -76,6 +76,13 @@ pub struct WinCtl {
     primary: bool,
     actions: HashMap<&'static str, gio::SimpleAction>,
     shortcut_ctrl: RefCell<Vec<gtk::ShortcutController>>,
+    /// Storage facts for the folder the island describes.
+    place: RefCell<Option<Place>>,
+    /// Stops measuring a folder we've left.
+    measuring: RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// Size of the selected folder, measured when the island's card opens.
+    sel_folder: RefCell<Option<(PathBuf, crate::ui::island::FolderSize)>>,
+    sel_measuring: RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl FmWindow {
@@ -109,6 +116,39 @@ impl FmWindow {
     }
 }
 
+/// Storage facts gathered for one folder.
+#[derive(Clone)]
+struct Place {
+    dir: PathBuf,
+    /// Drive (size, free).
+    drive: Option<(u64, u64)>,
+    scope: Scope,
+}
+
+#[derive(Clone)]
+enum Scope {
+    /// Not known yet.
+    Pending,
+    /// The folder is the top of a drive (Home, `/`, a mount point): show the drive.
+    Drive,
+    /// A folder inside a drive, with its measured size.
+    Folder(Option<u64>),
+}
+
+/// Home, `/` and mount points describe a whole drive; other folders describe
+/// themselves. Runs off the main thread (stat can block on network mounts).
+fn is_drive_top(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if dir == glib::home_dir() {
+        return true;
+    }
+    let Some(parent) = dir.parent() else { return true };
+    match (std::fs::metadata(dir), std::fs::metadata(parent)) {
+        (Ok(a), Ok(b)) => a.dev() != b.dev(),
+        _ => false,
+    }
+}
+
 pub fn apply_color_scheme(name: &str) {
     adw::StyleManager::default().set_color_scheme(match name {
         "light" => adw::ColorScheme::ForceLight,
@@ -118,6 +158,9 @@ pub fn apply_color_scheme(name: &str) {
 }
 
 fn dir_title(p: &Path) -> String {
+    if crate::core::operations::trash::is_trash(p) {
+        return "Trash".into();
+    }
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())
 }
 
@@ -271,7 +314,6 @@ impl WinCtl {
         header.pack_start(&nav_box);
         header.pack_start(&view_box);
         header.pack_end(&menu_btn);
-        header.pack_end(ops.button());
         header.pack_end(&recent_btn);
         header.pack_end(&preview_btn);
         header.pack_end(&options_btn);
@@ -348,8 +390,7 @@ impl WinCtl {
         });
 
         let quick_look = QuickLook::new(win.upcast_ref());
-        ops.toasts().set_child(Some(&content));
-        split.set_content(Some(ops.toasts()));
+        split.set_content(Some(&content));
         split.set_sidebar_width_fraction(0.2);
         split.set_min_sidebar_width(180.0);
         sidebar_btn.set_active(true);
@@ -369,6 +410,8 @@ impl WinCtl {
         let tiny = bp("max-width: 560sp");
         tiny.add_setter(&view_box, "visible", Some(&false.to_value()));
         tiny.add_setter(&preview_btn, "visible", Some(&false.to_value()));
+        // Too narrow for the island's text: keep just the ring.
+        tiny.add_setter(ops.island().text(), "visible", Some(&false.to_value()));
         win.add_breakpoint(tiny);
 
         win.add_css_class("fm-window");
@@ -376,7 +419,23 @@ impl WinCtl {
         tv.set_top_bar_style(adw::ToolbarStyle::Flat);
         tv.add_top_bar(&header);
         tv.set_content(Some(&split));
-        win.set_content(Some(&tv));
+        // The activity island floats over the middle of the header bar; the
+        // header's controls tighten up to make room for it.
+        let island_layer = crate::ui::island_layout::install(
+            &tv,
+            ops.island(),
+            &header,
+            vec![sidebar_btn.clone().upcast(), nav_box.clone().upcast(), view_box.clone().upcast()],
+            vec![
+                search.clone().upcast(),
+                options_btn.clone().upcast(),
+                preview_btn.clone().upcast(),
+                recent_btn.clone().upcast(),
+                menu_btn.clone().upcast(),
+            ],
+            vec![(search.clone().upcast(), 2), (view_box.clone().upcast(), 3)],
+        );
+        win.set_content(Some(&island_layer));
 
         let ctl = Rc::new(WinCtl {
             win: win.downgrade(),
@@ -401,6 +460,10 @@ impl WinCtl {
             primary,
             actions,
             shortcut_ctrl: RefCell::default(),
+            place: RefCell::default(),
+            measuring: RefCell::default(),
+            sel_folder: RefCell::default(),
+            sel_measuring: RefCell::default(),
         });
         *sb_nav.borrow_mut() = Some(Rc::downgrade(&ctl));
         *sb_drop.borrow_mut() = Some(Rc::downgrade(&ctl));
@@ -429,6 +492,27 @@ impl WinCtl {
             win.add_action(&cs);
         }
         let (w1, w2) = (weak.clone(), weak.clone());
+        // Free space and folder sizes change when operations finish.
+        let w = weak.clone();
+        self.env.ops.set_on_settled(move || {
+            if let Some(c) = w.upgrade() {
+                c.sel_folder.borrow_mut().take();
+                // Trashing, restoring or emptying changes what the Trash holds.
+                for t in c.tab_list.borrow().iter() {
+                    for p in t.panes.borrow().iter() {
+                        p.reload_trash();
+                    }
+                }
+                c.refresh_island(true);
+            }
+        });
+        // Opening the island's card on a selected folder measures it.
+        let w = weak.clone();
+        self.env.ops.island().set_on_open(move || {
+            if let Some(c) = w.upgrade() {
+                c.refresh_island(false);
+            }
+        });
         self.quick_look.set_callbacks(
             move |d| {
                 if let Some(p) = w1.upgrade().and_then(|c| c.active_pane()) {
@@ -639,6 +723,10 @@ impl WinCtl {
         self.on_tab_selected();
         self.save_session();
         #[cfg(debug_assertions)]
+        if let Ok(dir) = std::env::var("FM_ISLAND_DEMO") {
+            self.island_demo(PathBuf::from(dir));
+        }
+        #[cfg(debug_assertions)]
         if std::env::var("FM_QUICKLOOK").is_ok() {
             let w = Rc::downgrade(self);
             glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
@@ -646,6 +734,154 @@ impl WinCtl {
                     c.run_action("quick-preview");
                 }
             });
+        }
+    }
+
+    /// Debug: drive the activity island through a fake operation and save
+    /// window snapshots of each stage into `dir`, then quit.
+    #[cfg(debug_assertions)]
+    fn island_demo(self: &Rc<Self>, dir: PathBuf) {
+        use std::time::Duration;
+        let isl = self.env.ops.island().clone();
+        let win = self.win.clone();
+        let snap = move |name: &str| {
+            let Some(w) = win.upgrade() else { return };
+            let p = gtk::WidgetPaintable::new(Some(&w));
+            let s = gtk::Snapshot::new();
+            p.snapshot(&s, w.width() as f64, w.height() as f64);
+            if let (Some(node), Some(r)) = (s.to_node(), w.native().and_then(|n| n.renderer())) {
+                let _ = r.render_texture(node, None).save_to_png(dir.join(format!("{name}.png")));
+            }
+        };
+        // Same path as a real click on the pill.
+        let toggle = |i: &Rc<crate::ui::island::Island>| {
+            let Some(top) = i.widget.first_child() else { return };
+            let ctrls = top.observe_controllers();
+            for c in ctrls.into_iter().flatten() {
+                if let Ok(g) = c.downcast::<gtk::GestureClick>() {
+                    g.emit_by_name::<()>("released", &[&1i32, &0f64, &0f64]);
+                }
+            }
+        };
+        use crate::ui::island::Outcome;
+        let id = Rc::new(Cell::new(0u64));
+        let mut steps: Vec<(u64, Box<dyn Fn()>)> = Vec::new();
+        let mut at = |ms: u64, f: Box<dyn Fn()>| steps.push((ms, f));
+        let shot = |name: &'static str| {
+            let s = snap.clone();
+            Box::new(move || s(name)) as Box<dyn Fn()>
+        };
+        if std::env::var("FM_LIGHT").is_ok() {
+            at(300, Box::new(|| adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight)));
+        }
+        at(1200, shot("0-idle"));
+        let i = isl.clone();
+        at(1300, Box::new(move || toggle(&i)));
+        // A burst through the opening animation, to check it moves smoothly.
+        for (ms, name) in [(1330, "f1"), (1380, "f2"), (1430, "f3"), (1480, "f4"), (1560, "f5")] {
+            at(ms, shot(name));
+        }
+        at(1900, shot("1-idle-card"));
+        let i = isl.clone();
+        at(2000, Box::new(move || toggle(&i)));
+        let (i, d) = (isl.clone(), id.clone());
+        at(2600, Box::new(move || d.set(i.add("Copying 24 items to “Photos”", Rc::new(|| {}), Some(Rc::new(|_| {}))))));
+        let (i, d) = (isl.clone(), id.clone());
+        at(3000, Box::new(move || i.progress(d.get(), Some(0.42), "1.4 GB of 3.4 GB · IMG_2041.jpg", None)));
+        at(3500, shot("2-live"));
+        let i = isl.clone();
+        at(3600, Box::new(move || toggle(&i)));
+        at(4200, shot("3-expanded"));
+        let i = isl.clone();
+        at(4300, Box::new(move || toggle(&i)));
+        let (i, d) = (isl.clone(), id.clone());
+        at(5000, Box::new(move || i.finish(d.get(), Outcome::Done("Copied 24 items".into()))));
+        at(5600, shot("4-done"));
+        at(8000, shot("5-idle-again"));
+        // Inside a folder: its own size, not the drive's.
+        let w = Rc::downgrade(self);
+        at(
+            8100,
+            Box::new(move || {
+                if let Some(p) = w.upgrade().and_then(|c| c.active_pane()) {
+                    p.navigate(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
+                }
+            }),
+        );
+        at(9500, shot("6-folder"));
+        let i = isl.clone();
+        at(9600, Box::new(move || toggle(&i)));
+        at(10300, shot("7-folder-card"));
+        let i = isl.clone();
+        at(10400, Box::new(move || toggle(&i)));
+        let w = Rc::downgrade(self);
+        at(
+            10900,
+            Box::new(move || {
+                if let Some(p) = w.upgrade().and_then(|c| c.active_pane()) {
+                    p.select_visible("main.rs");
+                }
+            }),
+        );
+        at(11500, shot("8-selected"));
+        let i = isl.clone();
+        at(11600, Box::new(move || toggle(&i)));
+        at(12300, shot("9-selected-card"));
+        let i = isl.clone();
+        at(12400, Box::new(move || toggle(&i)));
+        // Split view with the list: each half must keep names readable.
+        let w = Rc::downgrade(self);
+        at(
+            12600,
+            Box::new(move || {
+                if let Some(c) = w.upgrade() {
+                    c.run_action("view-list");
+                    c.run_action("split-view");
+                }
+            }),
+        );
+        at(13600, shot("10-split"));
+        // A selected folder: its size appears when the card opens.
+        let w = Rc::downgrade(self);
+        at(
+            13700,
+            Box::new(move || {
+                if let Some(p) = w.upgrade().and_then(|c| c.active_pane()) {
+                    p.select_visible("ui");
+                }
+            }),
+        );
+        at(14200, shot("11-folder-selected"));
+        let i = isl.clone();
+        at(14300, Box::new(move || toggle(&i)));
+        at(15300, shot("12-folder-card"));
+        let i = isl.clone();
+        at(15400, Box::new(move || toggle(&i)));
+        // The Trash (view only: the demo never deletes anything).
+        let w = Rc::downgrade(self);
+        at(
+            15600,
+            Box::new(move || {
+                if let Some(c) = w.upgrade() {
+                    c.run_action("split-view");
+                    if let Some(p) = c.active_pane() {
+                        p.navigate(PathBuf::from(crate::core::operations::trash::TRASH_URI));
+                    }
+                }
+            }),
+        );
+        at(17000, shot("13-trash"));
+        let i = isl.clone();
+        at(17100, Box::new(move || toggle(&i)));
+        at(17800, shot("14-trash-card"));
+        at(
+            17900,
+            Box::new(move || {
+                std::process::exit(0);
+            }),
+        );
+        for (ms, f) in steps {
+            glib::timeout_add_local_once(Duration::from_millis(ms), f);
         }
     }
 
@@ -693,6 +929,194 @@ impl WinCtl {
         self.sync_header();
         self.update_actions();
         self.update_preview();
+        self.refresh_island(true);
+    }
+
+    /// Tell the island where we are: folder, its storage, the selection.
+    /// `requery` re-reads the drive and re-measures the folder (after
+    /// navigating, or when files may have changed).
+    fn refresh_island(self: &Rc<Self>, requery: bool) {
+        use crate::ui::island::{Idle, Selection, Storage};
+        let Some(p) = self.active_pane() else { return };
+        if p.in_trash() {
+            // The Trash describes itself: what's in it and how much space it takes.
+            let (n, bytes) = p.trash_summary();
+            self.env.ops.island().set_idle(Idle {
+                name: "Trash".into(),
+                path: "Deleted items from all drives".into(),
+                items: n as u32,
+                storage: Storage::Trash { bytes },
+                selection: None,
+            });
+            return;
+        }
+        let Some(dir) = p.cur_dir() else { return };
+        let place = self.place.borrow().as_ref().filter(|pl| pl.dir == dir).cloned();
+        let drive_size = place.as_ref().and_then(|pl| pl.drive).map(|(s, _)| s);
+        let storage = match place.as_ref().map(|pl| (&pl.scope, pl.drive)) {
+            Some((Scope::Drive, Some((size, free)))) => Storage::Drive { size, free },
+            Some((Scope::Folder(b), _)) => Storage::Folder { bytes: *b, drive_size },
+            _ => Storage::Unknown,
+        };
+        let infos = p.selection_infos();
+        let selection = match infos.as_slice() {
+            [] => None,
+            [one] => {
+                let is_dir = crate::core::filesystem::is_dir(one);
+                let path = dir.join(one.name());
+                let folder = if is_dir {
+                    self.sel_folder
+                        .borrow()
+                        .as_ref()
+                        .filter(|(p, _)| *p == path)
+                        .map(|(_, f)| f.clone())
+                        .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+                Some(Selection {
+                    count: 1,
+                    name: one.display_name().to_string(),
+                    kind: if is_dir {
+                        "Folder".into()
+                    } else {
+                        gio::content_type_get_description(&one.content_type().unwrap_or_default()).to_string()
+                    },
+                    bytes: one.size(),
+                    is_dir,
+                    modified: one
+                        .modification_date_time()
+                        .and_then(|d| d.to_local().ok())
+                        .and_then(|d| d.format("%Y-%m-%d %H:%M").ok())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default(),
+                    folder,
+                })
+            }
+            many => Some(Selection {
+                count: many.len() as u32,
+                bytes: many.iter().filter(|i| !crate::core::filesystem::is_dir(i)).map(|i| i.size()).sum(),
+                ..Default::default()
+            }),
+        };
+        // Selection moved off the folder being measured: stop walking it.
+        let selected_dir = match infos.as_slice() {
+            [one] if crate::core::filesystem::is_dir(one) => Some(dir.join(one.name())),
+            _ => None,
+        };
+        let stale = matches!(&*self.sel_folder.borrow(),
+            Some((p, crate::ui::island::FolderSize::Measuring)) if Some(p) != selected_dir.as_ref());
+        if stale {
+            self.sel_folder.borrow_mut().take();
+            if let Some(c) = self.sel_measuring.borrow_mut().take() {
+                c.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        // The card is open on a folder we haven't measured: measure it now.
+        let want_measure = self.env.ops.island().is_expanded()
+            && matches!(&selection, Some(s) if s.is_dir && s.folder == crate::ui::island::FolderSize::NotMeasured);
+        self.env.ops.island().set_idle(Idle {
+            name: dir_title(&dir),
+            path: dir.to_string_lossy().into_owned(),
+            items: p.visible_count(),
+            storage,
+            selection,
+        });
+        if want_measure && let [one] = infos.as_slice() {
+            self.measure_selected_folder(dir.join(one.name()));
+        }
+        if !requery && place.is_some() {
+            return;
+        }
+
+        // Keep what we know about this folder while re-measuring (no flicker);
+        // a new folder starts out measuring.
+        if place.is_none() {
+            *self.place.borrow_mut() = Some(Place { dir: dir.clone(), drive: None, scope: Scope::Pending });
+        }
+        let still_here = |c: &Rc<Self>, dir: &Path| c.active_pane().and_then(|p| p.cur_dir()).as_deref() == Some(dir);
+        let update = |c: &Rc<Self>, dir: &Path, f: &dyn Fn(&mut Place)| {
+            if let Some(pl) = c.place.borrow_mut().as_mut().filter(|pl| pl.dir == dir) {
+                f(pl);
+            }
+        };
+
+        // Drive size and free space.
+        let (w, d) = (Rc::downgrade(self), dir.clone());
+        glib::spawn_future_local(async move {
+            let info = crate::services::storage::fs_info(&gio::File::for_path(&d)).await;
+            let Some(c) = w.upgrade() else { return };
+            if let Some(i) = info.filter(|i| i.size > 0) {
+                update(&c, &d, &|pl| pl.drive = Some((i.size, i.free)));
+                if still_here(&c, &d) {
+                    c.refresh_island(false);
+                }
+            }
+        });
+
+        // The folder itself: the whole drive at its top, otherwise measured
+        // off the main thread (cancelled if we move on).
+        if let Some(old) = self.measuring.borrow_mut().take() {
+            old.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        *self.measuring.borrow_mut() = Some(cancel.clone());
+        let (w, d) = (Rc::downgrade(self), dir);
+        glib::spawn_future_local(async move {
+            let path = d.clone();
+            let c2 = cancel.clone();
+            let scope = gio::spawn_blocking(move || {
+                if is_drive_top(&path) {
+                    return Some(Scope::Drive);
+                }
+                let st = crate::core::metadata::dir_stats(&path, &c2);
+                (!c2.load(std::sync::atomic::Ordering::Relaxed)).then_some(Scope::Folder(Some(st.bytes)))
+            })
+            .await;
+            let (Some(c), Ok(Some(scope))) = (w.upgrade(), scope) else { return };
+            update(&c, &d, &|pl| pl.scope = scope.clone());
+            if still_here(&c, &d) {
+                c.refresh_island(false);
+            }
+        });
+    }
+
+    /// Measure a selected folder off the main thread; the island's card
+    /// shows "Measuring…" meanwhile. A newer request cancels this one.
+    fn measure_selected_folder(self: &Rc<Self>, path: PathBuf) {
+        use crate::ui::island::FolderSize;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        if let Some(old) = self.sel_measuring.borrow_mut().take() {
+            old.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.sel_measuring.borrow_mut() = Some(cancel.clone());
+        *self.sel_folder.borrow_mut() = Some((path.clone(), FolderSize::Measuring));
+        self.refresh_island(false);
+        let w = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let (p, c) = (path.clone(), cancel.clone());
+            let st = gio::spawn_blocking(move || {
+                let st = crate::core::metadata::dir_stats(&p, &c);
+                (!c.load(Ordering::Relaxed)).then_some(st)
+            })
+            .await;
+            let Some(win) = w.upgrade() else { return };
+            let mut cache = win.sel_folder.borrow_mut();
+            if cache.as_ref().is_none_or(|(p, _)| *p != path) {
+                return;
+            }
+            *cache = match st {
+                Ok(Some(st)) => Some((path, FolderSize::Done { bytes: st.bytes, files: st.files })),
+                // Cancelled or failed: measure again next time the card opens.
+                _ => None,
+            };
+            drop(cache);
+            win.refresh_island(false);
+        });
     }
 
     fn update_preview(&self) {
@@ -716,7 +1140,7 @@ impl WinCtl {
                 }
             }
             PaneEvent::Navigated => {
-                if let Some(d) = pane.cur_dir()
+                if let Some(d) = pane.location()
                     && idx == tab.active.get()
                 {
                     tab.page.set_title(&dir_title(&d));
@@ -729,6 +1153,7 @@ impl WinCtl {
                     self.sync_header();
                     self.update_actions();
                     self.update_preview();
+                    self.refresh_island(true);
                 }
                 self.save_session();
             }
@@ -737,6 +1162,8 @@ impl WinCtl {
                 if is_selected_tab && idx == tab.active.get() {
                     self.update_actions();
                     self.update_preview();
+                    // A finished load may follow file operations: re-read the drive.
+                    self.refresh_island(ev == PaneEvent::Status);
                 }
             }
         }
@@ -744,6 +1171,11 @@ impl WinCtl {
 
     fn save_session(&self) {
         if !self.primary || self.restoring.get() {
+            return;
+        }
+        // Debug demos navigate on their own; don't overwrite the real session.
+        #[cfg(debug_assertions)]
+        if std::env::var("FM_ISLAND_DEMO").is_ok() {
             return;
         }
         let mut paths = Vec::new();
@@ -858,7 +1290,7 @@ impl WinCtl {
             "quick-preview" => {
                 if self.quick_look.is_visible() {
                     self.quick_look.hide();
-                } else {
+                } else if !self.quick_look.just_dismissed() {
                     self.quick_look.show(pane.and_then(|p| p.preview_target()), true);
                 }
             }
@@ -912,10 +1344,28 @@ impl WinCtl {
             "find" => {
                 self.search.grab_focus();
             }
+            "empty-trash" => {
+                if let Some(win) = self.win.upgrade() {
+                    crate::ui::trash_view::empty_trash(win.upcast_ref(), &self.env.ops, || {});
+                }
+            }
             "bookmark-add" => {
-                if let Some(d) = cur {
-                    let msg = if self.sidebar.add_bookmark(&d) { "Bookmark added" } else { "Already bookmarked" };
-                    self.env.ops.toast(msg);
+                let targets = pane.as_ref().map(|p| p.favorite_targets()).unwrap_or_default();
+                let added = targets.iter().filter(|d| self.sidebar.add_bookmark(d)).count();
+                let msg = match (added, targets.len()) {
+                    (0, _) => "Already in Favorites".to_string(),
+                    (1, _) => "Added to Favorites".to_string(),
+                    (n, _) => format!("Added {n} folders to Favorites"),
+                };
+                if !targets.is_empty() {
+                    self.env.ops.toast(&msg);
+                }
+            }
+            "favorite-remove" => {
+                let targets = pane.as_ref().map(|p| p.favorite_targets()).unwrap_or_default();
+                let removed = targets.iter().filter(|d| self.sidebar.remove_favorite(d)).count();
+                if removed > 0 {
+                    self.env.ops.toast("Removed from Favorites");
                 }
             }
             "shortcuts" => {
