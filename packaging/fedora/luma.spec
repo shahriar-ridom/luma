@@ -4,7 +4,7 @@
 %global debug_package %{nil}
 
 Name:           luma
-Version:        0.3.0
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        A fast, native GTK4/libadwaita file manager
 License:        GPL-3.0-only
