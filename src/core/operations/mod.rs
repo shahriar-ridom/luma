@@ -150,6 +150,7 @@ pub fn spawn(req: OpRequest) -> (Control, async_channel::Receiver<Event>) {
         done: Vec::new(),
         last_dst: None,
         not_undoable: false,
+        disk_full: false,
     };
     std::thread::Builder::new()
         .name("fm-operation".into())
@@ -170,6 +171,8 @@ struct Ctx {
     done: Vec<(String, String)>,
     last_dst: Option<String>,
     not_undoable: bool,
+    /// A write failed because the disk is full (checked by error kind, not text).
+    disk_full: bool,
 }
 
 enum Resolved {
@@ -202,6 +205,9 @@ impl Ctx {
     fn error(&mut self, f: &gio::File, e: &gtk::glib::Error) {
         if e.matches(gio::IOErrorEnum::Cancelled) {
             return;
+        }
+        if e.matches(gio::IOErrorEnum::NoSpace) {
+            self.disk_full = true;
         }
         self.errors.push(OpError { uri: f.uri().to_string(), message: e.message().to_string() });
     }
@@ -366,7 +372,7 @@ fn run(mut ctx: Ctx, req: OpRequest) {
                     false
                 }
             },
-            (OpKind::Delete, _) => delete_tree(&mut ctx, src),
+            (OpKind::Delete, _) => delete_tree(&mut ctx, src, false),
             _ => false,
         };
         if !ok {
@@ -374,7 +380,7 @@ fn run(mut ctx: Ctx, req: OpRequest) {
         } else if let Some(d) = ctx.last_dst.take() {
             ctx.done.push((uri.clone(), d));
         }
-        if ctx.errors.iter().any(|e| e.message.to_lowercase().contains("no space")) {
+        if ctx.disk_full {
             // Disk full: further work is pointless.
             ctx.cancel.cancel();
         }
@@ -432,7 +438,7 @@ fn transfer(ctx: &mut Ctx, src: &gio::File, dest_dir: &gio::File, mv: bool) -> b
         Err(e) if e.matches(gio::IOErrorEnum::WouldRecurse) || e.matches(gio::IOErrorEnum::WouldMerge) => {
             // Cross-device folder or merge: copy everything, then delete the
             // source only if the whole copy succeeded.
-            if copy_tree(ctx, src, &dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src) } else { false }
+            if copy_tree(ctx, src, &dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src, false) } else { false }
         }
         Err(e) => {
             ctx.error(src, &e);
@@ -519,17 +525,37 @@ fn copy_tree(ctx: &mut Ctx, src: &gio::File, dst: &gio::File, overwrite: bool) -
     }
 }
 
-fn delete_tree(ctx: &mut Ctx, f: &gio::File) -> bool {
+/// Let the owner read, write and enter the local folder `f` (it is about to
+/// be deleted). Returns false if nothing changed or `f` isn't ours/local.
+fn relax_folder(f: &gio::File) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let Some(path) = f.path() else { return false };
+    let Ok(md) = std::fs::symlink_metadata(&path) else { return false };
+    if !md.is_dir() || md.uid() != nix::unistd::Uid::current().as_raw() || md.mode() & 0o700 == 0o700 {
+        return false;
+    }
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(md.mode() | 0o700)).is_ok()
+}
+
+/// Delete `f` and everything in it. `inside` is true for anything below the
+/// item the user chose: those folders are going away anyway, so a read-only
+/// one may be unlocked. The folder the user chose is never touched this way
+/// unless it is itself being deleted.
+fn delete_tree(ctx: &mut Ctx, f: &gio::File, inside: bool) -> bool {
     if ctx.cancelled() {
         return false;
     }
     let cancel = ctx.cancel.clone();
     let mut ok = true;
     if file_type(f) == gio::FileType::Directory {
-        match f.enumerate_children("standard::name", NOFOLLOW, Some(&cancel)) {
+        let mut listing = f.enumerate_children("standard::name", NOFOLLOW, Some(&cancel));
+        if matches!(&listing, Err(e) if e.matches(gio::IOErrorEnum::PermissionDenied)) && relax_folder(f) {
+            listing = f.enumerate_children("standard::name", NOFOLLOW, Some(&cancel));
+        }
+        match listing {
             Ok(en) => {
                 for child in en.flatten() {
-                    ok &= delete_tree(ctx, &f.child(child.name()));
+                    ok &= delete_tree(ctx, &f.child(child.name()), true);
                 }
             }
             Err(e) => {
@@ -541,7 +567,14 @@ fn delete_tree(ctx: &mut Ctx, f: &gio::File) -> bool {
             return false; // would fail with "not empty"
         }
     }
-    match f.delete(Some(&cancel)) {
+    let mut res = f.delete(Some(&cancel));
+    if inside
+        && matches!(&res, Err(e) if e.matches(gio::IOErrorEnum::PermissionDenied))
+        && f.parent().is_some_and(|p| relax_folder(&p))
+    {
+        res = f.delete(Some(&cancel));
+    }
+    match res {
         Ok(()) => {
             ctx.p.items_done += 1;
             ctx.emit(false);
@@ -659,6 +692,27 @@ mod tests {
         // Second copy merges into the existing folder and conflicts: renamed copy, but a merge isn't undoable.
         let (s, _) = run_op(req, Resolution::Rename);
         assert!(!s.undoable);
+    }
+
+    #[test]
+    fn delete_unlocks_read_only_folders_inside_the_tree_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (a, _b) = setup("delete-ro");
+        fs::set_permissions(a.join("dir/sub"), fs::Permissions::from_mode(0o555)).unwrap();
+        let req = OpRequest { kind: OpKind::Delete, sources: vec![uri(&a.join("dir"))], dest: None };
+        let (s, _) = run_op(req, Resolution::Skip);
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert!(!a.join("dir").exists());
+        // A single file in a read-only folder the user did not choose stays protected.
+        fs::create_dir_all(a.join("ro")).unwrap();
+        fs::write(a.join("ro/keep"), "k").unwrap();
+        fs::set_permissions(a.join("ro"), fs::Permissions::from_mode(0o555)).unwrap();
+        let req = OpRequest { kind: OpKind::Delete, sources: vec![uri(&a.join("ro/keep"))], dest: None };
+        let (s, _) = run_op(req, Resolution::Skip);
+        assert_eq!(s.errors.len(), 1);
+        assert!(a.join("ro/keep").exists());
+        assert_eq!(fs::metadata(a.join("ro")).unwrap().permissions().mode() & 0o777, 0o555);
+        fs::set_permissions(a.join("ro"), fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]

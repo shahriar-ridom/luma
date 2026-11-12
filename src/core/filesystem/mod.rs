@@ -54,6 +54,74 @@ pub async fn load_dir(
     }
 }
 
+/// Whether `path` is a folder (links followed), without blocking the caller.
+/// A stale network mount stalls a worker thread, never the UI.
+pub async fn is_dir_async(path: &std::path::Path) -> bool {
+    gio::File::for_path(path)
+        .query_info_future("standard::type", gio::FileQueryInfoFlags::NONE, gtk::glib::Priority::DEFAULT)
+        .await
+        .is_ok_and(|i| i.file_type() == gio::FileType::Directory)
+}
+
+/// Rename `from` to `to` without ever replacing something that is already
+/// there (`ErrorKind::AlreadyExists` instead). Uses the kernel's
+/// `RENAME_NOREPLACE`, so there is no gap between checking and renaming;
+/// where that is unavailable it falls back to checking first.
+pub fn rename_noreplace(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        use nix::{
+            errno::Errno,
+            fcntl::{AT_FDCWD, RenameFlags, renameat2},
+        };
+        match renameat2(AT_FDCWD, from, AT_FDCWD, to, RenameFlags::RENAME_NOREPLACE) {
+            Ok(()) => return Ok(()),
+            Err(Errno::EEXIST) => return Err(std::io::ErrorKind::AlreadyExists.into()),
+            // The filesystem can't do an atomic no-replace rename: check first instead.
+            Err(Errno::EINVAL | Errno::ENOSYS | Errno::ENOTSUP) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    if std::fs::symlink_metadata(to).is_ok() {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
+    std::fs::rename(from, to)
+}
+
+/// Give the owner full access to `dir` and every folder below it, so a
+/// read-only folder (mode 555) cannot stop its contents being deleted.
+fn make_deletable(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(md) = std::fs::symlink_metadata(dir) else { return };
+    if !md.is_dir() {
+        return;
+    }
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(md.permissions().mode() | 0o700));
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            make_deletable(&e.path());
+        }
+    }
+}
+
+/// Delete a file, link or whole folder tree (links are not followed). Folders
+/// that are read-only are unlocked first, which is only done for what is
+/// being deleted anyway.
+pub fn remove_tree(p: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => match std::fs::remove_dir_all(p) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                make_deletable(p);
+                std::fs::remove_dir_all(p)
+            }
+            r => r,
+        },
+        Ok(_) => std::fs::remove_file(p),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Icon name from our own family, chosen by content type, so files look the
 /// same whatever icon theme the system uses.
 pub fn icon_name(mime: &str, is_dir: bool) -> &'static str {
@@ -163,6 +231,30 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn noreplace_rename_never_overwrites_and_remove_tree_unlocks() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/noreplace");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a"), "A").unwrap();
+        fs::write(root.join("b"), "B").unwrap();
+        let err = rename_noreplace(&root.join("a"), &root.join("b")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(root.join("b")).unwrap(), "B");
+        assert!(root.join("a").exists());
+        rename_noreplace(&root.join("a"), &root.join("c")).unwrap();
+        assert_eq!(fs::read_to_string(root.join("c")).unwrap(), "A");
+
+        fs::create_dir_all(root.join("ro/inner")).unwrap();
+        fs::write(root.join("ro/inner/f"), "x").unwrap();
+        fs::set_permissions(root.join("ro/inner"), fs::Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(root.join("ro"), fs::Permissions::from_mode(0o555)).unwrap();
+        remove_tree(&root.join("ro")).unwrap();
+        assert!(!root.join("ro").exists());
+        remove_tree(&root.join("ro")).unwrap(); // already gone is fine
+    }
 
     #[test]
     fn natural_order() {

@@ -365,6 +365,7 @@ fn permissions_page(dialog: &adw::PreferencesDialog, path: &Path, md: &std::fs::
     let apply_group = adw::PreferencesGroup::new();
     let scope_combo = adw::ComboRow::new();
     scope_combo.set_title("Apply to");
+    scope_combo.set_subtitle("Folders also get search (x) wherever they can be read, so they stay usable");
     scope_combo.set_model(Some(&gtk::StringList::new(&[
         "This item only",
         "Everything inside",

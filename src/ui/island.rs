@@ -148,6 +148,7 @@ struct OpView {
     frac: Cell<Option<f64>>,
     started: Instant,
     failed: Cell<bool>,
+    cancel: CancelFn,
     row: gtk::Box,
     name: gtk::Label,
     controls: gtk::Box,
@@ -670,9 +671,10 @@ impl Island {
             controls.append(&b);
         }
         let stop = icon_button("luma-close-symbolic", "Cancel");
+        let cancel_row = cancel.clone();
         stop.connect_clicked(move |b| {
             b.set_sensitive(false);
-            cancel();
+            cancel_row();
         });
         controls.append(&stop);
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -699,6 +701,7 @@ impl Island {
             frac: Cell::new(None),
             started: Instant::now(),
             failed: Cell::new(false),
+            cancel,
             row,
             name,
             controls,
@@ -708,6 +711,20 @@ impl Island {
         }));
         self.refresh();
         id
+    }
+
+    /// Operations still running (failed rows waiting for dismissal don't count).
+    pub fn active_count(&self) -> usize {
+        self.ops.borrow().iter().filter(|o| !o.failed.get()).count()
+    }
+
+    /// Ask every running operation to stop.
+    pub fn cancel_all(&self) {
+        let running: Vec<CancelFn> =
+            self.ops.borrow().iter().filter(|o| !o.failed.get()).map(|o| o.cancel.clone()).collect();
+        for c in running {
+            c();
+        }
     }
 
     /// Live progress. `frac` is `None` while the size is unknown; `bytes`

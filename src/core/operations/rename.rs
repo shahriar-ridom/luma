@@ -175,6 +175,16 @@ pub fn has_problems(plan: &[Planned]) -> bool {
     plan.iter().any(|p| matches!(p.status, Status::Invalid(_) | Status::Duplicate | Status::Exists))
 }
 
+/// A hidden name in `dir` that nothing uses yet, so staging can never
+/// replace an existing file (e.g. one left behind by a crashed run).
+fn unused_temp_name(dir: &Path, i: usize) -> PathBuf {
+    let pid = std::process::id();
+    (0u32..)
+        .map(|n| dir.join(format!(".luma-rename-{pid}-{i}-{n}")))
+        .find(|p| fs::symlink_metadata(p).is_err())
+        .expect("an unused name exists")
+}
+
 /// Rename every `(from, to)` pair or none. Targets must not exist unless the
 /// target is itself one of the sources being renamed away.
 pub fn rename_many(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
@@ -201,7 +211,7 @@ pub fn rename_many(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
     };
     for (i, (from, to)) in pairs.iter().enumerate() {
         let dir = from.parent().unwrap_or_else(|| Path::new("."));
-        let tmp = dir.join(format!(".fm-rename-{}-{i}", std::process::id()));
+        let tmp = unused_temp_name(dir, i);
         if let Err(e) = fs::rename(from, &tmp) {
             undo(&staged);
             return Err(format!("{}: {e}", from.display()));

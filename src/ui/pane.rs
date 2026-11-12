@@ -132,9 +132,11 @@ async fn content_type_of(path: &Path) -> String {
         .unwrap_or_else(|| gio::content_type_guess(Some(path), None).0.to_string())
 }
 
-fn same_device(f: &gio::File, dest: &Path) -> bool {
-    let (Some(p), Ok(d)) = (f.path(), std::fs::metadata(dest)) else { return false };
-    std::fs::symlink_metadata(p).is_ok_and(|m| m.dev() == d.dev())
+/// True when every file lives on the same filesystem as `dest` (a move is then a rename).
+/// Stats files, so call it off the main thread.
+fn same_device(files: &[PathBuf], dest: &Path) -> bool {
+    let Ok(d) = std::fs::metadata(dest) else { return false };
+    files.iter().all(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.dev() == d.dev()))
 }
 
 impl Pane {
@@ -264,13 +266,15 @@ impl Pane {
         path_entry.connect_activate(move |e| {
             let Some(p) = w.upgrade() else { return };
             let path = resolve_location(e.text().as_str(), p.cur_dir().as_deref());
-            if path.is_dir() {
-                p.navigate(path);
-            } else {
-                e.add_css_class("error");
-                let e = e.clone();
-                glib::timeout_add_local_once(Duration::from_millis(800), move || e.remove_css_class("error"));
-            }
+            let e = e.clone();
+            glib::spawn_future_local(async move {
+                if filesystem::is_dir_async(&path).await {
+                    p.navigate(path);
+                } else {
+                    e.add_css_class("error");
+                    glib::timeout_add_local_once(Duration::from_millis(800), move || e.remove_css_class("error"));
+                }
+            });
         });
         // Escape leaves the entry without navigating.
         let esc = gtk::EventControllerKey::new();
@@ -884,11 +888,11 @@ impl Pane {
     }
 
     /// Ctrl forces copy; otherwise move within a filesystem, copy across.
-    pub fn drop_files(&self, files: Vec<gio::File>, dest: PathBuf, copy: bool) {
+    pub fn drop_files(self: &Rc<Self>, files: Vec<gio::File>, dest: PathBuf, copy: bool) {
         self.handle_drop(files, dest, copy)
     }
 
-    fn handle_drop(&self, files: Vec<gio::File>, dest: PathBuf, copy: bool) {
+    fn handle_drop(self: &Rc<Self>, files: Vec<gio::File>, dest: PathBuf, copy: bool) {
         // Dropped on the Trash: move them to the trash.
         if is_trash(&dest) {
             if !files.is_empty() {
@@ -902,8 +906,22 @@ impl Pane {
         }
         let dest_file = gio::File::for_path(&dest);
         let files: Vec<_> = files.into_iter().filter(|f| !f.equal(&dest_file)).collect();
-        let kind = if !copy && files.iter().all(|f| same_device(f, &dest)) { OpKind::Move } else { OpKind::Copy };
-        self.submit_transfer(files, &dest, kind);
+        if copy {
+            self.submit_transfer(files, &dest, OpKind::Copy);
+            return;
+        }
+        // Moving within one filesystem is a rename; across filesystems it copies.
+        // The check stats files, so it runs off the main thread.
+        let paths: Option<Vec<PathBuf>> = files.iter().map(|f| f.path()).collect();
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let d = dest.clone();
+            let same = match paths {
+                Some(p) => gio::spawn_blocking(move || same_device(&p, &d)).await.unwrap_or(false),
+                None => false,
+            };
+            this.submit_transfer(files, &dest, if same { OpKind::Move } else { OpKind::Copy });
+        });
     }
 
     pub fn trash(&self) {

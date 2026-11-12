@@ -114,6 +114,10 @@ impl RepoStatus {
 
 fn git(root: &Path) -> Command {
     let mut c = Command::new("git");
+    // A repository's own config is untrusted input (it may come from a
+    // downloaded archive). Switch off the settings that run programs just
+    // because we looked at the folder.
+    c.args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never"]);
     c.arg("-C").arg(root);
     c.env("GIT_OPTIONAL_LOCKS", "0").env("LC_ALL", "C").env("GIT_TERMINAL_PROMPT", "0");
     c.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
@@ -233,11 +237,39 @@ pub fn states_for_dir(st: &RepoStatus, dir: &Path) -> HashMap<String, FileState>
 /// Run `git status` in `dir`; `None` if `dir` isn't in a repository.
 pub fn status(dir: &Path) -> Option<RepoStatus> {
     let root = find_root_fast(dir)?;
-    let out = git(&root)
-        .args(["status", "--porcelain=v2", "--branch", "-z", "--ignored=traditional", "--untracked-files=normal"])
-        .output()
-        .ok()?;
+    let mut cmd = git(&root);
+    cmd.args(["status", "--porcelain=v2", "--branch", "-z", "--ignored=traditional", "--untracked-files=normal"]);
+    let out = output_with_timeout(cmd, STATUS_TIMEOUT)?;
     out.status.success().then(|| parse_status(&root, &out.stdout))
+}
+
+/// Status on a huge repository or a hung network mount must not run forever.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Like `Command::output`, but kills the child after `timeout` (returns `None`).
+fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Option<std::process::Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    let mut o = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = o.read_to_end(&mut buf);
+        buf
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if start.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => return None,
+        }
+    };
+    Some(std::process::Output { status, stdout: reader.join().unwrap_or_default(), stderr: Vec::new() })
 }
 
 fn run(mut cmd: Command, cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
@@ -290,17 +322,22 @@ pub fn stage(root: &Path, paths: &[PathBuf]) -> Result<String, String> {
 }
 
 pub fn unstage(root: &Path, paths: &[PathBuf]) -> Result<String, String> {
-    let mut c = git(root);
-    c.args(["restore", "--staged", "--"]).args(paths);
-    match run(c, &AtomicBool::new(false), Duration::from_secs(60)) {
-        Ok(s) => Ok(s),
-        Err(_) => {
-            // No commits yet (no HEAD to restore from): drop from the index instead.
-            let mut c = git(root);
-            c.args(["rm", "--cached", "-r", "-q", "--"]).args(paths);
-            run(c, &AtomicBool::new(false), Duration::from_secs(60))
-        }
+    let timeout = Duration::from_secs(60);
+    let has_head = {
+        let mut c = git(root);
+        c.args(["rev-parse", "--verify", "-q", "HEAD"]);
+        run(c, &AtomicBool::new(false), timeout).is_ok()
+    };
+    if has_head {
+        let mut c = git(root);
+        c.args(["restore", "--staged", "--"]).args(paths);
+        return run(c, &AtomicBool::new(false), timeout);
     }
+    // No commits yet (nothing to restore from): drop from the index instead.
+    // Only here, so a failed restore can never turn into staged deletions.
+    let mut c = git(root);
+    c.args(["rm", "--cached", "-r", "-q", "--"]).args(paths);
+    run(c, &AtomicBool::new(false), timeout)
 }
 
 /// Throw away uncommitted edits to tracked files. Untracked files are never touched.
@@ -389,6 +426,44 @@ u UU N... 1 2 3 4 a b c conflict.txt\0\
         assert_eq!(src["new.rs"], FileState::Untracked);
         let inside = states_for_dir(&st, Path::new("/r/build/out"));
         assert_eq!(inside["*"], FileState::Untracked);
+    }
+
+    #[test]
+    fn repo_config_cannot_run_programs_on_status() {
+        use std::os::unix::fs::PermissionsExt;
+        let r = repo("git_untrusted");
+        fs::write(r.join("a.txt"), "x\n").unwrap();
+        let (hook, marker) = (r.join("evil.sh"), r.join("ran"));
+        fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        sh(&r, &["config", "core.fsmonitor", hook.to_str().unwrap()]);
+        assert!(status(&r).is_some());
+        assert!(!marker.exists(), "status must not run programs named in the repository's config");
+    }
+
+    #[test]
+    fn failed_unstage_never_stages_deletions() {
+        let r = repo("git_unstage");
+        fs::write(r.join("a.txt"), "one\n").unwrap();
+        stage(&r, &[r.join("a.txt")]).unwrap();
+        commit(&r, "first").unwrap();
+        // A path git does not know about makes `restore` fail; that must not fall back to `rm --cached`.
+        assert!(unstage(&r, &[r.join("a.txt"), r.join("nope.txt")]).is_err());
+        assert!(status(&r).unwrap().changes.is_empty(), "{:?}", status(&r).unwrap().changes);
+        assert!(r.join("a.txt").exists());
+    }
+
+    #[test]
+    fn slow_commands_are_killed() {
+        let mut c = Command::new("sleep");
+        c.arg("5");
+        let t = Instant::now();
+        assert!(output_with_timeout(c, Duration::from_millis(200)).is_none());
+        assert!(t.elapsed() < Duration::from_secs(3));
+        let mut c = Command::new("echo");
+        c.arg("hi");
+        let out = output_with_timeout(c, Duration::from_secs(5)).unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
     }
 
     #[test]

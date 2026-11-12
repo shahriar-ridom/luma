@@ -90,6 +90,15 @@ impl OpsUi {
         &self.0.island
     }
 
+    /// How many operations and background jobs are still running.
+    pub fn active_count(&self) -> usize {
+        self.0.island.active_count()
+    }
+
+    pub fn cancel_all(&self) {
+        self.0.island.cancel_all();
+    }
+
     pub fn set_on_settled(&self, f: impl Fn() + 'static) {
         *self.0.on_settled.borrow_mut() = Some(Rc::new(f));
     }

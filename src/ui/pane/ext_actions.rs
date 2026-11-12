@@ -60,7 +60,7 @@ impl Pane {
             return;
         }
         // Run inside the folder being shown (for a folder target, inside it).
-        let cwd = if paths.len() == 1 && paths[0].is_dir() && self.list.selected_count() == 0 {
+        let cwd = if paths.len() == 1 && items.first().is_some_and(|i| i.is_dir) && self.list.selected_count() == 0 {
             paths[0].clone()
         } else {
             dir.clone()

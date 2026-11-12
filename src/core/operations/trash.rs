@@ -82,17 +82,30 @@ fn topdir_of(p: &Path) -> Option<PathBuf> {
     Some(cur.to_path_buf())
 }
 
+/// `p` with symlinks in its parent folders resolved. The item itself is gone
+/// (it is in the trash), so only the parent can be resolved.
+fn resolved(p: &Path) -> PathBuf {
+    match (p.parent().and_then(|d| fs::canonicalize(d).ok()), p.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => p.to_path_buf(),
+    }
+}
+
 /// Look for `orig` in the home trash, then in the volume's own trash.
+/// `orig` may have been reached through a symlink (`~/storage -> /mnt/storage`):
+/// the home trash records the path as given, a volume trash records it
+/// relative to the volume's real top directory.
 pub fn find_anywhere(orig: &Path) -> Option<Trashed> {
+    let real = resolved(orig);
     let home = gtk::glib::user_data_dir().join("Trash");
-    if let Some(t) = find(&home, None, orig) {
+    if let Some(t) = find(&home, None, orig).or_else(|| find(&home, None, &real)) {
         return Some(t);
     }
-    let top = topdir_of(orig)?;
+    let top = topdir_of(&real)?;
     let uid = nix::unistd::Uid::current().as_raw();
     [top.join(".Trash").join(uid.to_string()), top.join(format!(".Trash-{uid}"))]
         .iter()
-        .find_map(|d| find(d, Some(&top), orig))
+        .find_map(|d| find(d, Some(&top), &real))
 }
 
 /// The path the Trash view lives at. Not a real folder: panes treat it as
@@ -195,18 +208,9 @@ pub fn restore_item(it: &Item) -> io::Result<()> {
     restore(&Trashed { file: it.file.clone(), info: it.info.clone(), deleted: it.deleted.clone() }, &it.orig)
 }
 
-fn remove_any(p: &Path) -> io::Result<()> {
-    match fs::symlink_metadata(p) {
-        Ok(m) if m.is_dir() => fs::remove_dir_all(p),
-        Ok(_) => fs::remove_file(p),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
 /// Delete an item for good, with its info file.
 pub fn delete_item(it: &Item) -> io::Result<()> {
-    remove_any(&it.file)?;
+    crate::core::filesystem::remove_tree(&it.file)?;
     let _ = fs::remove_file(&it.info);
     Ok(())
 }
@@ -307,5 +311,25 @@ mod tests {
         assert!(!folder.file.exists() && !folder.info.exists());
         assert_eq!(list(&t).len(), 1);
         assert!(is_trash(Path::new(TRASH_URI)) && !is_trash(Path::new("/tmp")));
+    }
+
+    #[test]
+    fn symlinked_parents_are_resolved_and_read_only_folders_deleted() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/trash-links");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("real/sub")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+        let real = fs::canonicalize(root.join("real")).unwrap();
+        assert_eq!(resolved(&root.join("link/sub/gone.txt")), real.join("sub/gone.txt"));
+        assert_eq!(resolved(Path::new("/no/such/dir/x")), PathBuf::from("/no/such/dir/x"));
+
+        let locked = root.join("locked");
+        fs::create_dir_all(locked.join("inner")).unwrap();
+        fs::write(locked.join("inner/f"), "x").unwrap();
+        fs::set_permissions(locked.join("inner"), fs::Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        crate::core::filesystem::remove_tree(&locked).unwrap();
+        assert!(!locked.exists());
     }
 }

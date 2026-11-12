@@ -5,7 +5,8 @@
 //! own defaults reject `..` components and unsafe symlinks.
 
 use std::{
-    io::Read,
+    io::{Read, Write},
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -151,6 +152,37 @@ fn bsdtar() -> Command {
     Command::new("bsdtar")
 }
 
+/// Start `cmd`, handing it the passphrase on stdin.
+///
+/// The passphrase must never be a command-line argument: every user on the
+/// machine can read those. bsdtar asks for it on the terminal when it has one
+/// and falls back to stdin when it has none, so the child gets its own
+/// session (no controlling terminal) and a pipe. That also stops a Luma that
+/// was started from a shell from waiting on that shell's terminal.
+fn spawn_bsdtar(mut cmd: Command, passphrase: Option<&str>) -> Result<std::process::Child, ArchiveError> {
+    if passphrase.is_some_and(|p| p.contains(['\n', '\r'])) {
+        return Err(ArchiveError::Failed("a passphrase can’t contain a line break".into()));
+    }
+    cmd.stdin(if passphrase.is_some() { Stdio::piped() } else { Stdio::null() });
+    // SAFETY: only `setsid`, which is async-signal-safe, runs between fork and exec.
+    unsafe {
+        cmd.pre_exec(|| nix::unistd::setsid().map(drop).map_err(std::io::Error::from));
+    }
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ArchiveError::Missing
+        } else {
+            ArchiveError::Failed(e.to_string())
+        }
+    })?;
+    if let (Some(p), Some(mut stdin)) = (passphrase, child.stdin.take()) {
+        // bsdtar may ask more than once (it retries on a wrong passphrase) or
+        // never (unencrypted archive); a closed pipe is not an error.
+        let _ = stdin.write_all(format!("{p}\n").as_bytes());
+    }
+    Ok(child)
+}
+
 fn classify(stderr: &str) -> ArchiveError {
     let l = stderr.to_lowercase();
     if l.contains("passphrase") || l.contains("encrypted") && l.contains("password") {
@@ -162,15 +194,9 @@ fn classify(stderr: &str) -> ArchiveError {
 
 /// Run to completion, polling `cancel`. stderr is drained on a thread so a
 /// chatty tool can never block on a full pipe.
-fn run(mut cmd: Command, cancel: &AtomicBool) -> Result<(), ArchiveError> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ArchiveError::Missing
-        } else {
-            ArchiveError::Failed(e.to_string())
-        }
-    })?;
+fn run(mut cmd: Command, passphrase: Option<&str>, cancel: &AtomicBool) -> Result<(), ArchiveError> {
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = spawn_bsdtar(cmd, passphrase)?;
     let mut err = child.stderr.take().expect("piped");
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
@@ -198,17 +224,8 @@ fn run(mut cmd: Command, cancel: &AtomicBool) -> Result<(), ArchiveError> {
 
 pub fn list(archive: &Path, passphrase: Option<&str>) -> Result<Vec<Entry>, ArchiveError> {
     let mut cmd = bsdtar();
-    cmd.arg("-tvf").arg(archive);
-    if let Some(p) = passphrase {
-        cmd.arg("--passphrase").arg(p);
-    }
-    let out = cmd.output().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ArchiveError::Missing
-        } else {
-            ArchiveError::Failed(e.to_string())
-        }
-    })?;
+    cmd.arg("-tvf").arg(archive).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let out = spawn_bsdtar(cmd, passphrase)?.wait_with_output().map_err(|e| ArchiveError::Failed(e.to_string()))?;
     if !out.status.success() {
         return Err(classify(&String::from_utf8_lossy(&out.stderr)));
     }
@@ -229,22 +246,13 @@ fn parse_line(line: &str) -> Option<Entry> {
         rest = &rest[rest.find(char::is_whitespace)?..];
     }
     let mut path = rest.trim_start().to_string();
-    if let Some(i) = path.find(" -> ") {
+    if perms.starts_with('l')
+        && let Some(i) = path.find(" -> ")
+    {
         path.truncate(i); // symlink: keep only the entry name
     }
     let is_dir = perms.starts_with('d') || path.ends_with('/');
     Some(Entry { path: path.trim_end_matches('/').to_string(), size, is_dir })
-}
-
-fn top_level(entries: &[Entry]) -> Vec<String> {
-    let mut tops: Vec<String> = entries
-        .iter()
-        .filter_map(|e| e.path.trim_start_matches("./").split('/').next().map(str::to_string))
-        .filter(|s| !s.is_empty() && s != ".")
-        .collect();
-    tops.sort();
-    tops.dedup();
-    tops
 }
 
 fn unique_dir(parent: &Path, base: &str) -> PathBuf {
@@ -255,43 +263,75 @@ fn unique_dir(parent: &Path, base: &str) -> PathBuf {
     (2..).map(|n| parent.join(format!("{base} {n}"))).find(|p| !p.exists()).unwrap()
 }
 
-/// Extract next to the archive without ever overwriting: a lone top-level
-/// entry that doesn't exist yet goes straight into `dest_parent`; anything
-/// else goes into a fresh `<archive name>` folder. Returns the path to reveal.
+/// A folder next to the extraction target that nothing uses yet; the archive
+/// is unpacked here first, so a failed or cancelled extraction leaves nothing
+/// behind. Same folder as the destination, so the final rename is atomic.
+fn staging_dir(dest_parent: &Path) -> Result<PathBuf, ArchiveError> {
+    let pid = std::process::id();
+    for n in 0u32..1000 {
+        let d = dest_parent.join(format!(".luma-extract-{pid}-{n}"));
+        match std::fs::create_dir(&d) {
+            Ok(()) => return Ok(d),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(ArchiveError::Failed(e.to_string())),
+        }
+    }
+    Err(ArchiveError::Failed("could not create a temporary folder".into()))
+}
+
+/// Extract next to the archive without ever overwriting. The archive is
+/// unpacked into a hidden staging folder; only when that succeeded does a lone
+/// top-level entry that doesn't exist yet move into `dest_parent`, and
+/// anything else become a fresh `<archive name>` folder. Returns the path to
+/// reveal.
 pub fn extract_smart(
     archive: &Path,
     dest_parent: &Path,
     passphrase: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<PathBuf, ArchiveError> {
-    let entries = list(archive, passphrase)?;
-    let tops = top_level(&entries);
-    let name = archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let (target_dir, reveal) = match tops.as_slice() {
-        [one] if !dest_parent.join(one).exists() => (dest_parent.to_path_buf(), dest_parent.join(one)),
-        _ => {
-            let d = unique_dir(dest_parent, &stem(&name));
-            (d.clone(), d)
-        }
-    };
-    let created = target_dir != dest_parent;
-    if created {
-        std::fs::create_dir(&target_dir).map_err(|e| ArchiveError::Failed(e.to_string()))?;
-    }
+    let stage = staging_dir(dest_parent)?;
+    let result = unpack_into(archive, &stage, passphrase, cancel).and_then(|()| place(archive, &stage, dest_parent));
+    // Whatever is left of the staging folder (everything, after a failure) goes.
+    let _ = crate::core::filesystem::remove_tree(&stage);
+    result
+}
+
+fn unpack_into(
+    archive: &Path,
+    stage: &Path,
+    passphrase: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<(), ArchiveError> {
     let mut cmd = bsdtar();
-    cmd.arg("-xf").arg(archive).arg("-C").arg(&target_dir).arg("--no-same-owner");
-    if let Some(p) = passphrase {
-        cmd.arg("--passphrase").arg(p);
-    }
-    match run(cmd, cancel) {
-        Ok(()) => Ok(reveal),
-        Err(e) => {
-            if created {
-                let _ = std::fs::remove_dir_all(&target_dir); // only the folder we made
-            }
-            Err(e)
+    cmd.arg("-xf").arg(archive).arg("-C").arg(stage).arg("--no-same-owner");
+    run(cmd, passphrase, cancel)
+}
+
+/// Move what was unpacked in `stage` to its final place under `dest_parent`.
+fn place(archive: &Path, stage: &Path, dest_parent: &Path) -> Result<PathBuf, ArchiveError> {
+    use crate::core::filesystem::rename_noreplace;
+    use std::io::ErrorKind::AlreadyExists;
+    let fail = |e: std::io::Error| ArchiveError::Failed(e.to_string());
+    let names: Vec<_> = std::fs::read_dir(stage).map_err(fail)?.flatten().map(|e| e.file_name()).collect();
+    if let [one] = names.as_slice() {
+        let target = dest_parent.join(one);
+        match rename_noreplace(&stage.join(one), &target) {
+            Ok(()) => return Ok(target),
+            Err(e) if e.kind() == AlreadyExists => {} // wrap it in a folder instead
+            Err(e) => return Err(fail(e)),
         }
     }
+    let name = archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    for _ in 0..1000 {
+        let dir = unique_dir(dest_parent, &stem(&name));
+        match rename_noreplace(stage, &dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == AlreadyExists => continue, // taken in the meantime: pick the next name
+            Err(e) => return Err(fail(e)),
+        }
+    }
+    Err(ArchiveError::Failed("could not find a free folder name".into()))
 }
 
 /// Create `out` from `names` (relative to `base_dir`). Writes to a temporary
@@ -328,8 +368,8 @@ pub fn create(
     };
     cmd.arg("-cf").arg(&part).arg("-C").arg(base_dir).arg("--");
     cmd.args(names);
-    match run(cmd, cancel) {
-        Ok(()) => std::fs::rename(&part, out).map_err(|e| {
+    match run(cmd, None, cancel) {
+        Ok(()) => crate::core::filesystem::rename_noreplace(&part, out).map_err(|e| {
             let _ = std::fs::remove_file(&part);
             ArchiveError::Failed(e.to_string())
         }),
@@ -365,6 +405,71 @@ mod tests {
         assert_eq!(stem("a.b.zip"), "a.b");
     }
 
+    fn no_leftovers(dir: &Path) {
+        let left: Vec<_> = fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(left.is_empty(), "left behind: {left:?}");
+    }
+
+    #[test]
+    fn failed_extraction_leaves_nothing_behind() {
+        let root = tmp("archive-fail");
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        // Poorly compressible data so the archive is big enough to cut in the middle.
+        let data: Vec<u8> = (0..400_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        fs::write(src.join("one.bin"), &data).unwrap();
+        fs::write(src.join("two.bin"), &data).unwrap();
+        let c = AtomicBool::new(false);
+        let good = root.join("good.tar.gz");
+        create(Format::TarGz, Level::Fast, &src, &["one.bin".into(), "two.bin".into()], &good, &c).unwrap();
+        let bytes = fs::read(&good).unwrap();
+        let cut = root.join("cut.tar.gz");
+        fs::write(&cut, &bytes[..bytes.len() * 2 / 3]).unwrap();
+        let garbage = root.join("garbage.zip");
+        fs::write(&garbage, b"this is not an archive").unwrap();
+        for bad in [&cut, &garbage] {
+            let dest = root.join(format!("dest-{}", bad.file_name().unwrap().to_string_lossy()));
+            fs::create_dir_all(&dest).unwrap();
+            assert!(extract_smart(bad, &dest, None, &c).is_err());
+            no_leftovers(&dest);
+        }
+        // A cancelled extraction cleans up too.
+        let dest = root.join("dest-cancel");
+        fs::create_dir_all(&dest).unwrap();
+        assert!(matches!(extract_smart(&good, &dest, None, &AtomicBool::new(true)), Err(ArchiveError::Cancelled)));
+        no_leftovers(&dest);
+    }
+
+    #[test]
+    fn passphrase_travels_on_stdin() {
+        let root = tmp("archive-pass");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/secret.txt"), "classified").unwrap();
+        let zip = root.join("locked.zip");
+        // Built by hand: Luma itself never creates encrypted archives.
+        let made = Command::new("bsdtar")
+            .args(["--format", "zip", "--options", "zip:encryption=zipcrypt", "--passphrase", "hunter2", "-cf"])
+            .arg(&zip)
+            .arg("-C")
+            .arg(root.join("src"))
+            .arg("secret.txt")
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let c = AtomicBool::new(false);
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        assert!(matches!(extract_smart(&zip, &dest, None, &c), Err(ArchiveError::NeedsPassphrase)));
+        assert!(matches!(extract_smart(&zip, &dest, Some("wrong"), &c), Err(ArchiveError::NeedsPassphrase)));
+        no_leftovers(&dest);
+        let shown = extract_smart(&zip, &dest, Some("hunter2"), &c).unwrap();
+        assert_eq!(fs::read_to_string(shown).unwrap(), "classified");
+        assert!(matches!(
+            extract_smart(&zip, &dest, Some("two\nlines"), &c),
+            Err(ArchiveError::Failed(m)) if m.contains("line break")
+        ));
+    }
+
     #[test]
     fn parses_listing_with_spaces_and_links() {
         let e = parse_line("-rw-r--r--  0 me  me      1234 Jan  1 12:00 my dir/file name.txt").unwrap();
@@ -373,6 +478,8 @@ mod tests {
         assert!(d.is_dir && d.path == "my dir");
         let l = parse_line("lrwxrwxrwx  0 me  me         0 Jan  1 12:00 link -> target").unwrap();
         assert_eq!(l.path, "link");
+        let odd = parse_line("-rw-r--r--  0 me  me         5 Jan  1 12:00 a -> b.txt").unwrap();
+        assert_eq!(odd.path, "a -> b.txt", "only symlinks carry a target");
     }
 
     #[test]

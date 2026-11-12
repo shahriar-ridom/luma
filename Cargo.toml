@@ -18,7 +18,7 @@ gtk = { version = "0.11.5", package = "gtk4", features = ["v4_12"] }
 include_dir = "0.7.4"
 kamadak-exif = "0.6.1"
 lofty = "0.25.5"
-nix = { version = "0.31.3", features = ["user", "fs"] }
+nix = { version = "0.31.3", features = ["user", "fs", "process"] }
 regex = "1.13.1"
 rusqlite = "0.41.1"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -57,11 +57,20 @@ pub struct ApplyReport {
     pub errors: Vec<(PathBuf, String)>,
 }
 
+/// Mode for a folder when `mode` is applied recursively: wherever a class may
+/// read, it also gets search (`x`), like `chmod -R u=rwX`. Without this, a
+/// mode such as 644 would lock everyone out of the folder it is applied to.
+pub fn folder_mode(mode: u32) -> u32 {
+    mode | ((mode & 0o444) >> 2)
+}
+
 /// Apply `mode` to `root` and (per `scope`) to its descendants. Symlinks are
-/// never followed or changed.
+/// never followed or changed. With a recursive scope, folders get
+/// [`folder_mode`] and are changed after everything inside them, so a mode
+/// that removes access never stops the walk.
 pub fn apply(root: &Path, mode: u32, scope: Scope, cancel: &AtomicBool) -> ApplyReport {
     let mut rep = ApplyReport::default();
-    let do_one = |p: &Path, rep: &mut ApplyReport| match set_mode(p, mode) {
+    let do_one = |p: &Path, mode: u32, rep: &mut ApplyReport| match set_mode(p, mode) {
         Ok(()) => rep.changed += 1,
         Err(e) => rep.errors.push((p.to_path_buf(), e.to_string())),
     };
@@ -72,16 +81,14 @@ pub fn apply(root: &Path, mode: u32, scope: Scope, cancel: &AtomicBool) -> Apply
     if md.file_type().is_symlink() {
         return rep;
     }
-    let root_applies = match scope {
-        Scope::FilesOnly => !md.is_dir(),
-        _ => true,
-    };
-    if root_applies {
-        do_one(root, &mut rep);
-    }
     if scope == Scope::ItemOnly || !md.is_dir() {
+        do_one(root, mode, &mut rep);
         return rep;
     }
+    let dirs_change = matches!(scope, Scope::All | Scope::FoldersOnly);
+    let files_change = matches!(scope, Scope::All | Scope::FilesOnly);
+    // Folders in discovery order; changed last, deepest first.
+    let mut folders = vec![root.to_path_buf()];
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(rd) = fs::read_dir(&dir) else {
@@ -98,13 +105,16 @@ pub fn apply(root: &Path, mode: u32, scope: Scope, cancel: &AtomicBool) -> Apply
             }
             let p = e.path();
             if ft.is_dir() {
-                stack.push(p.clone());
-                if matches!(scope, Scope::All | Scope::FoldersOnly) {
-                    do_one(&p, &mut rep);
-                }
-            } else if matches!(scope, Scope::All | Scope::FilesOnly) {
-                do_one(&p, &mut rep);
+                folders.push(p.clone());
+                stack.push(p);
+            } else if files_change {
+                do_one(&p, mode, &mut rep);
             }
+        }
+    }
+    if dirs_change {
+        for d in folders.iter().rev() {
+            do_one(d, folder_mode(mode), &mut rep);
         }
     }
     rep
@@ -165,5 +175,21 @@ mod tests {
         apply(&root.join("d"), 0o640, Scope::FilesOnly, &c);
         assert_eq!(mode_of(&root.join("d/f")).unwrap(), 0o640);
         assert_eq!(mode_of(&root.join("d")).unwrap(), 0o750);
+    }
+
+    #[test]
+    fn recursive_mode_without_search_bit_does_not_lock_folders() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/perm-order");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("d/inner")).unwrap();
+        fs::write(root.join("d/inner/f"), "x").unwrap();
+        assert_eq!(folder_mode(0o644), 0o755);
+        assert_eq!(folder_mode(0o600), 0o700);
+        assert_eq!(folder_mode(0o000), 0o000);
+        let rep = apply(&root.join("d"), 0o644, Scope::All, &AtomicBool::new(false));
+        assert!(rep.errors.is_empty(), "{:?}", rep.errors);
+        assert_eq!(mode_of(&root.join("d/inner/f")).unwrap(), 0o644);
+        assert_eq!(mode_of(&root.join("d/inner")).unwrap(), 0o755);
+        assert_eq!(mode_of(&root.join("d")).unwrap(), 0o755);
     }
 }

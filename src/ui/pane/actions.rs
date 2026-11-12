@@ -345,20 +345,21 @@ impl Pane {
         if paths.is_empty() {
             return;
         }
-        let default = if paths.len() == 1 {
-            let n = paths[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            if paths[0].is_dir() {
-                n
-            } else {
-                n.rsplit_once('.').map(|(s, _)| s.to_string()).filter(|s| !s.is_empty()).unwrap_or(n)
-            }
-        } else {
-            dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "archive".into())
-        };
         let this = self.clone();
         glib::spawn_future_local(async move {
+            let default = if paths.len() == 1 {
+                let n = paths[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if filesystem::is_dir_async(&paths[0]).await {
+                    n
+                } else {
+                    n.rsplit_once('.').map(|(s, _)| s.to_string()).filter(|s| !s.is_empty()).unwrap_or(n)
+                }
+            } else {
+                dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "archive".into())
+            };
             let Some(c) = archive_dialogs::compress(&win, &default, paths.len()).await else { return };
-            let out = unique_file(&dir, &c.name, c.format.ext());
+            let (d, n, e) = (dir.clone(), c.name.clone(), c.format.ext());
+            let Ok(out) = gio::spawn_blocking(move || unique_file(&d, &n, e)).await else { return };
             let names: Vec<String> =
                 paths.iter().filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).collect();
             let (base, out2) = (dir.clone(), out.clone());

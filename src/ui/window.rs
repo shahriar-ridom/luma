@@ -73,6 +73,8 @@ pub struct WinCtl {
     title: adw::WindowTitle,
     syncing: Cell<bool>,
     restoring: Cell<bool>,
+    /// Set once the user agreed to close while operations were running.
+    close_confirmed: Cell<bool>,
     primary: bool,
     actions: HashMap<&'static str, gio::SimpleAction>,
     shortcut_ctrl: RefCell<Vec<gtk::ShortcutController>>,
@@ -457,6 +459,7 @@ impl WinCtl {
             title,
             syncing: Cell::new(false),
             restoring: Cell::new(false),
+            close_confirmed: Cell::new(false),
             primary,
             actions,
             shortcut_ctrl: RefCell::default(),
@@ -638,6 +641,7 @@ impl WinCtl {
         let w = weak.clone();
         self.tabs.connect_close_page(move |_, page| {
             if let Some(c) = w.upgrade()
+                && !c.restoring.get()
                 && let Some(tab) = c.tab_for(page)
                 && let Some(d) = tab.panes.borrow().first().and_then(|p| p.cur_dir())
             {
@@ -692,6 +696,35 @@ impl WinCtl {
             let w = weak.clone();
             win.connect_close_request(move |win| {
                 if let Some(c) = w.upgrade()
+                    && !c.close_confirmed.get()
+                    && c.env.ops.active_count() > 0
+                {
+                    // Closing would kill running copies mid-file: ask first.
+                    let (c, win) = (c.clone(), win.clone());
+                    glib::spawn_future_local(async move {
+                        let n = c.env.ops.active_count();
+                        let body = if n == 1 {
+                            "An operation is still running. Closing now cancels it and may leave a partly copied file behind.".to_string()
+                        } else {
+                            format!("{n} operations are still running. Closing now cancels them and may leave partly copied files behind.")
+                        };
+                        if !dialogs::confirm(win.upcast_ref(), "Cancel running operations?", &body, "Cancel and Close", true).await {
+                            return;
+                        }
+                        c.env.ops.cancel_all();
+                        // Give the workers a moment to stop and clean up.
+                        for _ in 0..30 {
+                            if c.env.ops.active_count() == 0 {
+                                break;
+                            }
+                            glib::timeout_future(std::time::Duration::from_millis(100)).await;
+                        }
+                        c.close_confirmed.set(true);
+                        win.close();
+                    });
+                    return glib::Propagation::Stop;
+                }
+                if let Some(c) = w.upgrade()
                     && c.primary
                 {
                     let (width, height) = win.default_size();
@@ -709,14 +742,50 @@ impl WinCtl {
 
     // ---- tabs --------------------------------------------------------------
 
+    /// Folders that no longer exist are dropped, but only after the window is
+    /// up: checking them here could freeze startup on a stale network mount.
+    fn drop_missing_tabs(self: &Rc<Self>, saved: Vec<(PathBuf, Rc<Tab>)>) {
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let paths: Vec<PathBuf> = saved.iter().map(|(p, _)| p.clone()).collect();
+            let Ok(found) = gio::spawn_blocking(move || paths.iter().map(|p| p.is_dir()).collect::<Vec<_>>()).await
+            else {
+                return;
+            };
+            let gone: Vec<(PathBuf, Rc<Tab>)> =
+                saved.into_iter().zip(found).filter(|(_, ok)| !ok).map(|(s, _)| s).collect();
+            // Skip tabs the user already closed or navigated somewhere else.
+            let gone: Vec<Rc<Tab>> = gone
+                .into_iter()
+                .filter(|(p, t)| {
+                    this.tab_list.borrow().iter().any(|x| Rc::ptr_eq(x, t))
+                        && t.panes.borrow().first().and_then(|pane| pane.cur_dir()).as_deref() == Some(p.as_path())
+                })
+                .map(|(_, t)| t)
+                .collect();
+            if gone.is_empty() {
+                return;
+            }
+            this.restoring.set(true);
+            if gone.len() == this.tabs.n_pages() as usize {
+                this.add_tab(glib::home_dir(), true);
+            }
+            for t in gone {
+                this.tabs.close_page(&t.page);
+            }
+            this.restoring.set(false);
+            this.save_session();
+        });
+    }
+
     fn restore(self: &Rc<Self>, mut paths: Vec<PathBuf>, active: usize) {
-        paths.retain(|p| p.is_dir());
         if paths.is_empty() {
             paths.push(glib::home_dir());
         }
         self.restoring.set(true);
-        let tabs: Vec<_> = paths.into_iter().map(|p| self.add_tab(p, false)).collect();
+        let tabs: Vec<_> = paths.iter().cloned().map(|p| self.add_tab(p, false)).collect();
         self.restoring.set(false);
+        self.drop_missing_tabs(paths.into_iter().zip(tabs.iter().cloned()).collect());
         if let Some(t) = tabs.get(active).or(tabs.first()) {
             self.tabs.set_selected_page(&t.page);
         }
@@ -1332,11 +1401,15 @@ impl WinCtl {
                             let Some(pane) = w.upgrade().and_then(|c| c.active_pane()) else { return };
                             if reveal {
                                 pane.reveal(path);
-                            } else if path.is_dir() {
-                                pane.navigate(path);
-                            } else {
-                                pane.launch(&path);
+                                return;
                             }
+                            glib::spawn_future_local(async move {
+                                if crate::core::filesystem::is_dir_async(&path).await {
+                                    pane.navigate(path);
+                                } else {
+                                    pane.launch(&path);
+                                }
+                            });
                         }),
                     );
                 }
@@ -1442,22 +1515,26 @@ impl WinCtl {
     }
 
     fn open_locations(self: &Rc<Self>, paths: Vec<PathBuf>, properties: bool) {
-        for p in paths {
-            if p.is_dir() {
-                self.add_tab(p, true);
-            } else if let (Some(parent), Some(name)) = (p.parent(), p.file_name()) {
-                let tab = self.add_tab(parent.to_path_buf(), true);
-                tab.active_pane().select_when_loaded(name.to_string_lossy().into_owned());
-                if properties {
-                    let w = Rc::downgrade(self);
-                    glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
-                        if let Some(c) = w.upgrade() {
-                            c.run_action("properties");
-                        }
-                    });
+        let this = self.clone();
+        // Telling folders from files stats them; do that off the main thread.
+        glib::spawn_future_local(async move {
+            for p in paths {
+                if crate::core::filesystem::is_dir_async(&p).await {
+                    this.add_tab(p, true);
+                } else if let (Some(parent), Some(name)) = (p.parent(), p.file_name()) {
+                    let tab = this.add_tab(parent.to_path_buf(), true);
+                    tab.active_pane().select_when_loaded(name.to_string_lossy().into_owned());
+                    if properties {
+                        let w = Rc::downgrade(&this);
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
+                            if let Some(c) = w.upgrade() {
+                                c.run_action("properties");
+                            }
+                        });
+                    }
                 }
             }
-        }
+        });
     }
 
     fn undo(self: &Rc<Self>) {
@@ -1576,47 +1653,54 @@ impl WinCtl {
             b.set_child(Some(&l));
             b
         };
-        let folders: Vec<_> = self
-            .state
-            .db
-            .recent_locations(40)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|p| p.is_dir())
-            .take(10)
-            .collect();
-        let files: Vec<_> =
-            self.state.db.recent_files(40).unwrap_or_default().into_iter().filter(|p| p.exists()).take(10).collect();
-        col.append(&heading("Recent Folders"));
-        if folders.is_empty() {
-            col.append(&gtk::Label::new(Some("Nothing yet")));
-        }
-        for p in folders {
-            let b = entry(&p);
-            let (w, pop2) = (Rc::downgrade(self), pop.clone());
-            b.connect_clicked(move |_| {
-                pop2.popdown();
-                if let Some(pane) = w.upgrade().and_then(|c| c.active_pane()) {
-                    pane.navigate(p.clone());
-                }
-            });
-            col.append(&b);
-        }
-        col.append(&heading("Recent Files"));
-        if files.is_empty() {
-            col.append(&gtk::Label::new(Some("Nothing yet")));
-        }
-        for p in files {
-            let b = entry(&p);
-            let (w, pop2) = (Rc::downgrade(self), pop.clone());
-            b.connect_clicked(move |_| {
-                pop2.popdown();
-                if let Some(pane) = w.upgrade().and_then(|c| c.active_pane()) {
-                    pane.launch(&p);
-                }
-            });
-            col.append(&b);
-        }
+        // Checking that each entry still exists touches the disk (maybe a stale
+        // network mount), so the list fills in once that has run off the main thread.
+        let folders = self.state.db.recent_locations(40).unwrap_or_default();
+        let files = self.state.db.recent_files(40).unwrap_or_default();
+        let loading = gtk::Label::new(Some("Loading…"));
+        col.append(&loading);
+        let (this, col2, pop3) = (self.clone(), col.clone(), pop.clone());
+        glib::spawn_future_local(async move {
+            let checked = gio::spawn_blocking(move || {
+                let folders: Vec<_> = folders.into_iter().filter(|p| p.is_dir()).take(10).collect();
+                let files: Vec<_> = files.into_iter().filter(|p| p.exists()).take(10).collect();
+                (folders, files)
+            })
+            .await;
+            let (folders, files) = checked.unwrap_or_default();
+            let (col, pop, this) = (col2, pop3, this);
+            col.remove(&loading);
+            col.append(&heading("Recent Folders"));
+            if folders.is_empty() {
+                col.append(&gtk::Label::new(Some("Nothing yet")));
+            }
+            for p in folders {
+                let b = entry(&p);
+                let (w, pop2) = (Rc::downgrade(&this), pop.clone());
+                b.connect_clicked(move |_| {
+                    pop2.popdown();
+                    if let Some(pane) = w.upgrade().and_then(|c| c.active_pane()) {
+                        pane.navigate(p.clone());
+                    }
+                });
+                col.append(&b);
+            }
+            col.append(&heading("Recent Files"));
+            if files.is_empty() {
+                col.append(&gtk::Label::new(Some("Nothing yet")));
+            }
+            for p in files {
+                let b = entry(&p);
+                let (w, pop2) = (Rc::downgrade(&this), pop.clone());
+                b.connect_clicked(move |_| {
+                    pop2.popdown();
+                    if let Some(pane) = w.upgrade().and_then(|c| c.active_pane()) {
+                        pane.launch(&p);
+                    }
+                });
+                col.append(&b);
+            }
+        });
         let sw = gtk::ScrolledWindow::new();
         sw.set_child(Some(&col));
         sw.set_propagate_natural_height(true);
