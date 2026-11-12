@@ -1750,6 +1750,9 @@ impl WinCtl {
         }
         win.add_controller(normal.clone());
         win.add_controller(bare.clone());
+        if let Some(app) = win.application() {
+            crate::ui::menubar::install(&app, &self.state);
+        }
         *self.shortcut_ctrl.borrow_mut() = vec![normal, bare];
     }
 }

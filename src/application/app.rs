@@ -29,6 +29,8 @@ pub fn run() -> glib::ExitCode {
         }
         gtk::Window::set_default_icon_name(APP_ID);
     });
+    let menu_state = state.clone();
+    app.connect_startup(move |app| crate::ui::globalmenu::start(app.upcast_ref(), menu_state.clone()));
     let activate_state = state.clone();
     app.connect_activate(move |app| {
         // First window restores the previous session; later ones start at home.
