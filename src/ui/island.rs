@@ -671,7 +671,7 @@ impl Island {
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         if let Some(pause) = pause {
             let b = gtk::ToggleButton::new();
-            b.set_icon_name("luma-pause-symbolic");
+            b.set_icon_name(crate::application::icons::themed("luma-pause-symbolic"));
             b.set_tooltip_text(Some("Pause"));
             b.add_css_class("flat");
             b.add_css_class("circular");
@@ -682,7 +682,7 @@ impl Island {
             });
             controls.append(&b);
         }
-        let stop = icon_button("luma-close-symbolic", "Cancel");
+        let stop = icon_button(crate::application::icons::themed("luma-close-symbolic"), "Cancel");
         let cancel_row = cancel.clone();
         stop.connect_clicked(move |b| {
             b.set_sensitive(false);
@@ -823,7 +823,7 @@ impl Island {
             });
             op.controls.append(&b);
         }
-        let dismiss = icon_button("luma-close-symbolic", "Dismiss");
+        let dismiss = icon_button(crate::application::icons::themed("luma-close-symbolic"), "Dismiss");
         let w = self.me.clone();
         dismiss.connect_clicked(move |_| {
             if let Some(i) = w.upgrade() {

@@ -14,6 +14,8 @@ pub struct Preferences {
     pub show_hidden: RefCell<bool>,
     /// "default" | "light" | "dark"
     pub color_scheme: RefCell<String>,
+    /// "" = system icon pack | "luma" = built-in | an installed pack's name
+    pub icon_pack: RefCell<String>,
     /// Terminal emulator command; empty = auto-detect.
     pub terminal: RefCell<String>,
     /// Show Git status in repositories (default on).

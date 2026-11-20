@@ -159,7 +159,7 @@ impl TrashView {
         }
 
         let empty = adw::StatusPage::builder()
-            .icon_name("luma-trash-symbolic")
+            .icon_name(crate::application::icons::themed("luma-trash-symbolic"))
             .title("Trash is empty")
             .description("Items you delete stay here until you empty the Trash.")
             .build();

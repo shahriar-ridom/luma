@@ -4,6 +4,17 @@ All notable changes are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-11-20
+
+- TODO: describe this release.
+
+## [Unreleased]
+
+- New app icon: frosted-glass folder with papers and the L mark.
+- Icon packs: Luma now uses the system's icon pack (including `~/.local/share/icons`) for UI glyphs, folders and file types, and falls back to its own icons where the pack has none. Pick a pack, or the built-in Luma icons, under Appearance → Icon Pack.
+- Higher contrast: stronger borders, selection and dimmed text across the UI. No blur or transparency was added.
+- Light/dark and accent colour keep following the system setting.
+
 ## [0.4.1] - 2026-11-20
 
 This pull request introduces several improvements and fixes across the codebase, focusing on security, stability, and user experience. The most notable changes include preventing passwords from being stored in saved network connections, improving file comparison reliability, enhancing duplicate file search with new traversal controls, and clarifying documentation and UI behaviors.
