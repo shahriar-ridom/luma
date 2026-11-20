@@ -1,5 +1,5 @@
 /* ───────────────────────────── Luma ─────────────────────────────
-   Quiet frame, one raised sheet. Everything derives from libadwaita's named
+   Quiet frame, one raised sheet; solid surfaces and strong hairlines for contrast. Everything derives from libadwaita's named
    colours, so light, dark and the system accent all come along for free.   */
 
 /* ── Motion ─────────────────────────────────────────────────────────── */
@@ -24,13 +24,13 @@
 .fm-island {
   background-color: @view_bg_color;
   color: @view_fg_color;
-  border: 1px solid alpha(@window_fg_color, 0.09);
+  border: 1px solid alpha(@window_fg_color, 0.18);
   border-radius: 999px;
   padding: 5px 10px;
   box-shadow: 0 1px 2px alpha(black, 0.06), 0 8px 22px -12px alpha(black, 0.4);
   transition: border-radius 240ms cubic-bezier(.2, .8, .2, 1), box-shadow 200ms ease, border-color 200ms ease;
 }
-.fm-island:hover { border-color: alpha(@window_fg_color, 0.16); }
+.fm-island:hover { border-color: alpha(@window_fg_color, 0.3); }
 /* Same top padding as the pill so the top row doesn't move when it opens. */
 .fm-island.expanded {
   border-radius: 14px;
@@ -41,21 +41,21 @@
 .fm-island-text.fm-island-swap { animation: fm-island-swap 220ms ease-out both; }
 
 .fm-island-ring { color: @accent_color; transition: color 200ms ease; }
-.fm-island.idle .fm-island-ring { color: alpha(@view_fg_color, 0.55); }
+.fm-island.idle .fm-island-ring { color: alpha(@view_fg_color, 0.75); }
 .fm-island.idle.low-space .fm-island-ring { color: @warning_color; }
 .fm-island.done .fm-island-ring { color: @success_color; }
 .fm-island.error .fm-island-ring { color: @error_color; }
-.fm-island.stopped .fm-island-ring { color: alpha(@view_fg_color, 0.5); }
+.fm-island.stopped .fm-island-ring { color: alpha(@view_fg_color, 0.7); }
 
 .fm-island-top { min-height: 22px; }
 .fm-island-title { font-weight: 600; font-size: 0.9em; }
 .fm-island.message .fm-island-title { font-weight: 500; }
 .fm-island-pct { font-size: 0.9em; font-weight: 600; font-feature-settings: "tnum"; color: @accent_color; }
-.fm-island.idle .fm-island-pct { font-weight: 500; color: alpha(@view_fg_color, 0.55); }
+.fm-island.idle .fm-island-pct { font-weight: 500; color: alpha(@view_fg_color, 0.75); }
 .fm-island-details { margin-top: 14px; }
-.fm-island-op + .fm-island-op { border-top: 1px solid alpha(@window_fg_color, 0.07); padding-top: 14px; }
+.fm-island-op + .fm-island-op { border-top: 1px solid alpha(@window_fg_color, 0.14); padding-top: 14px; }
 .fm-island-op-title { font-weight: 600; }
-.fm-island-meta { font-size: 0.85em; font-feature-settings: "tnum"; color: alpha(@view_fg_color, 0.55); }
+.fm-island-meta { font-size: 0.85em; font-feature-settings: "tnum"; color: alpha(@view_fg_color, 0.75); }
 .fm-island .failed .fm-island-op-title { color: @error_color; }
 .fm-island .failed .fm-island-meta { color: alpha(@view_fg_color, 0.75); }
 .fm-island scrolledwindow { background: transparent; }
@@ -63,7 +63,7 @@
 .fm-island button.fm-island-action { min-height: 26px; padding: 0 12px; border-radius: 999px; font-weight: 600;
   background-color: alpha(@accent_bg_color, 0.14); color: @accent_color; }
 .fm-island button.fm-island-action:hover { background-color: alpha(@accent_bg_color, 0.22); }
-.fm-island-bar trough, .fm-island-usage trough { background-color: alpha(@window_fg_color, 0.08); min-height: 4px; border-radius: 99px; border: none; box-shadow: none; }
+.fm-island-bar trough, .fm-island-usage trough { background-color: alpha(@window_fg_color, 0.16); min-height: 4px; border-radius: 99px; border: none; box-shadow: none; }
 .fm-island-bar progress { background-color: @accent_bg_color; min-height: 4px; border-radius: 99px; }
 .fm-island-usage block.filled { background-color: alpha(@view_fg_color, 0.45); min-height: 4px; border-radius: 99px; }
 .fm-island-usage.low block.filled { background-color: @warning_color; }
@@ -78,11 +78,11 @@
 
 /* ── Trash ─────────────────────────────────────────────────────────── */
 .fm-trash-bar { padding: 8px 12px 6px 18px; }
-.fm-trash-note { font-size: 0.85em; color: alpha(@view_fg_color, 0.55); }
+.fm-trash-note { font-size: 0.85em; color: alpha(@view_fg_color, 0.75); }
 .fm-trash-empty { border-radius: 999px; padding: 0 14px; min-height: 28px; font-weight: 600;
   background-color: alpha(@error_bg_color, 0.14); color: @error_color; }
 .fm-trash-empty:hover { background-color: alpha(@error_bg_color, 0.22); }
-.fm-trash-empty:disabled { background-color: alpha(@view_fg_color, 0.05); color: alpha(@view_fg_color, 0.35); }
+.fm-trash-empty:disabled { background-color: alpha(@view_fg_color, 0.1); color: alpha(@view_fg_color, 0.35); }
 
 /* ── Frame and sheet ────────────────────────────────────────────────── */
 window.fm-window { background-color: @window_bg_color; }
@@ -90,11 +90,11 @@ window.fm-window { background-color: @window_bg_color; }
 .fm-sheet {
   background-color: @view_bg_color;
   border-radius: 14px;
-  border: 1px solid alpha(@window_fg_color, 0.09);
+  border: 1px solid alpha(@window_fg_color, 0.18);
   box-shadow: 0 1px 2px alpha(black, 0.05), 0 14px 30px -18px alpha(black, 0.42);
   margin: 0 12px 12px 2px;
 }
-.fm-sheet separator { background-color: alpha(@window_fg_color, 0.07); min-height: 1px; min-width: 1px; }
+.fm-sheet separator { background-color: alpha(@window_fg_color, 0.14); min-height: 1px; min-width: 1px; }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 headerbar.fm-header { background: transparent; box-shadow: none; border: none; min-height: 50px; }
@@ -102,87 +102,87 @@ headerbar.fm-header button { border-radius: 9px; min-width: 32px; min-height: 32
 headerbar.fm-header button:active { transform: scale(0.93); }
 
 /* Segmented groups: one soft pill, the active segment lifts out of it. */
-.fm-seg { background-color: alpha(@window_fg_color, 0.065); border-radius: 11px; padding: 2px; }
+.fm-seg { background-color: alpha(@window_fg_color, 0.1); border-radius: 11px; padding: 2px; }
 .fm-seg button { background: transparent; box-shadow: none; border-radius: 9px; min-width: 30px; min-height: 28px; padding: 0 6px; }
-.fm-seg button:hover { background-color: alpha(@window_fg_color, 0.07); }
+.fm-seg button:hover { background-color: alpha(@window_fg_color, 0.14); }
 .fm-seg button:checked { background-color: @view_bg_color; box-shadow: 0 1px 2px alpha(black, 0.18), 0 0 0 1px alpha(@window_fg_color, 0.05); }
 .fm-seg button:disabled { opacity: 0.35; }
 
 headerbar.fm-header togglebutton:checked { background-color: alpha(@window_fg_color, 0.1); }
 
-entry.search, searchentry { border-radius: 999px; min-height: 30px; background-color: alpha(@window_fg_color, 0.065); box-shadow: none; }
+entry.search, searchentry { border-radius: 999px; min-height: 30px; background-color: alpha(@window_fg_color, 0.1); box-shadow: none; }
 
 /* ── Sidebar ────────────────────────────────────────────────────────── */
 .fm-split .sidebar-pane, .fm-split .sidebar-pane > * { background: transparent; box-shadow: none; border: none; }
 .fm-sidebar, .fm-sidebar list { background: transparent; }
 .fm-sidebar row { border-radius: 9px; margin: 1px 10px; padding: 0 4px; min-height: 34px; transition: background-color 150ms ease; }
 .fm-sidebar row:hover { background-color: alpha(@window_fg_color, 0.06); }
-.fm-sidebar row:selected { background-color: alpha(@accent_bg_color, 0.2); color: @window_fg_color; }
+.fm-sidebar row:selected { background-color: alpha(@accent_bg_color, 0.34); color: @window_fg_color; }
 .fm-sidebar row:selected image { color: @accent_color; }
-.fm-sidebar row image { opacity: 0.8; }
+.fm-sidebar row image { opacity: 0.95; }
 .fm-sidebar row:selected image { opacity: 1; }
-.fm-section { font-size: 0.78em; font-weight: 700; letter-spacing: 0.03em; opacity: 0.5; }
+.fm-section { font-size: 0.78em; font-weight: 700; letter-spacing: 0.03em; opacity: 0.75; }
 
 /* ── Tabs ───────────────────────────────────────────────────────────── */
 tabbar.fm-tabbar > revealer > box { background: transparent; box-shadow: none; border: none; padding: 0 12px 6px 4px; }
 
 /* ── Location bar and status ────────────────────────────────────────── */
 .pane-pathbar { padding: 3px 8px; }
-.fm-crumbs button { border-radius: 8px; min-height: 28px; padding: 0 8px; font-weight: 500; opacity: 0.72; transition: background-color 120ms ease, opacity 120ms ease; }
+.fm-crumbs button { border-radius: 8px; min-height: 28px; padding: 0 8px; font-weight: 500; opacity: 0.88; transition: background-color 120ms ease, opacity 120ms ease; }
 .fm-crumbs button:hover { opacity: 1; }
 .fm-crumbs .fm-crumb-current { font-weight: 700; opacity: 1; }
-.fm-crumb-sep { opacity: 0.3; margin: 0 1px; }
+.fm-crumb-sep { opacity: 0.55; margin: 0 1px; }
 /* Crumbs cut off on the left fade out instead of ending mid-word. */
 .fm-crumb-scroll undershoot.left { background-image: linear-gradient(to right, @view_bg_color, alpha(@view_bg_color, 0)); background-size: 28px 100%; background-repeat: no-repeat; }
 .pane-pathbar entry { border-radius: 9px; }
-.fm-status { font-size: 0.85em; font-feature-settings: "tnum"; opacity: 0.7; }
+.fm-status { font-size: 0.85em; font-feature-settings: "tnum"; opacity: 0.88; }
 .pane-active .pane-pathbar { box-shadow: inset 0 -2px @accent_bg_color; }
 
 /* ── File views ─────────────────────────────────────────────────────── */
 columnview.fm-list, gridview.fm-grid, listview.fm-miller, listview.fm-strip { background: transparent; }
 
 columnview.fm-list > header { background: transparent; border: none; box-shadow: none; padding: 2px 8px 0 8px; }
-columnview.fm-list > header > button { font-weight: 600; font-size: 0.84em; opacity: 0.55; background: transparent; box-shadow: none; padding: 6px 10px; min-height: 26px; }
+columnview.fm-list > header > button { font-weight: 600; font-size: 0.84em; opacity: 0.8; background: transparent; box-shadow: none; padding: 6px 10px; min-height: 26px; }
 columnview.fm-list > header > button:hover { opacity: 0.9; }
 columnview.fm-list > header separator { background: transparent; min-width: 0; }
 columnview.fm-list > listview { background: transparent; }
 columnview.fm-list row, listview.fm-miller row { border-radius: 9px; margin: 1px 8px; min-height: 38px; transition: background-color 120ms ease; }
 columnview.fm-list row cell { padding: 0 10px; font-feature-settings: "tnum"; }
-columnview.fm-list row:hover, listview.fm-miller row:hover { background-color: alpha(@view_fg_color, 0.05); }
-columnview.fm-list row:selected, listview.fm-miller row:selected { background-color: alpha(@accent_bg_color, 0.2); color: @view_fg_color; }
-columnview.fm-list row:selected:hover { background-color: alpha(@accent_bg_color, 0.26); }
+columnview.fm-list row:hover, listview.fm-miller row:hover { background-color: alpha(@view_fg_color, 0.1); }
+columnview.fm-list row:selected, listview.fm-miller row:selected { background-color: alpha(@accent_bg_color, 0.34); color: @view_fg_color; }
+columnview.fm-list row:selected:hover { background-color: alpha(@accent_bg_color, 0.42); }
 columnview.fm-list row image { -gtk-icon-size: 22px; }
 
 gridview.fm-grid { padding: 10px 14px; }
 gridview.fm-grid > child { border-radius: 14px; margin: 3px; padding: 4px 2px; transition: background-color 140ms ease; }
-gridview.fm-grid > child:hover { background-color: alpha(@view_fg_color, 0.05); }
-gridview.fm-grid > child:selected { background-color: alpha(@accent_bg_color, 0.2); }
+gridview.fm-grid > child:hover { background-color: alpha(@view_fg_color, 0.1); }
+gridview.fm-grid > child:selected { background-color: alpha(@accent_bg_color, 0.34); }
 .fm-grid-item label { font-size: 0.92em; }
 .fm-thumb { border-radius: 9px; }
 
 listview.fm-strip { padding: 8px 10px; }
 listview.fm-strip > row { border-radius: 12px; padding: 2px; margin: 0 2px; }
-listview.fm-strip > row:selected { background-color: alpha(@accent_bg_color, 0.24); }
+listview.fm-strip > row:selected { background-color: alpha(@accent_bg_color, 0.38); }
 
-.fm-chev { opacity: 0.35; }
+.fm-chev { opacity: 0.6; }
 scale.fm-zoom trough, .fm-sheet scale trough { min-height: 4px; border-radius: 999px; }
 
 /* ── Context menus ───────────────────────────────────────────────────── */
 popover.fm-menu > contents { padding: 6px; border-radius: 14px; }
 popover.fm-menu .fm-menu-item { font-weight: 400; border-radius: 8px; min-height: 32px; padding: 0 10px; transition: background-color 100ms ease; }
-popover.fm-menu .fm-menu-item:hover { background-color: alpha(@window_fg_color, 0.08); }
-popover.fm-menu .fm-menu-item:disabled { opacity: 0.4; }
+popover.fm-menu .fm-menu-item:hover { background-color: alpha(@window_fg_color, 0.16); }
+popover.fm-menu .fm-menu-item:disabled { opacity: 0.5; }
 popover.fm-menu .fm-menu-accel { font-size: 0.85em; }
-popover.fm-menu .fm-menu-sep { margin: 5px 6px; background-color: alpha(@window_fg_color, 0.08); }
+popover.fm-menu .fm-menu-sep { margin: 5px 6px; background-color: alpha(@window_fg_color, 0.16); }
 
 /* ── Drag and drop ──────────────────────────────────────────────────── */
 .drop-hover { background-color: alpha(@accent_bg_color, 0.3); border-radius: 10px; }
 
 /* ── Quick Look, preview, gallery ───────────────────────────────────── */
-.fm-preview .key { opacity: 0.55; font-size: 0.9em; }
+.fm-preview .key { opacity: 0.78; font-size: 0.9em; }
 .fm-preview-media picture, .fm-preview-media image { border-radius: 12px; }
 .fm-preview-text { font-family: monospace; font-size: 0.92em; }
-.fm-gallery-strip { background-color: alpha(@window_fg_color, 0.035); border-top: 1px solid alpha(@window_fg_color, 0.08); }
+.fm-gallery-strip { background-color: alpha(@window_fg_color, 0.07); border-top: 1px solid alpha(@window_fg_color, 0.16); }
 .fm-gallery-nav { margin: 10px; }
 
 /* ── Badges: Git state, tags, usage ─────────────────────────────────── */

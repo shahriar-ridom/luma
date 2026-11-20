@@ -151,6 +151,19 @@ fn is_drive_top(dir: &Path) -> bool {
     }
 }
 
+/// System default, Luma's own icons, then every pack installed on the system.
+pub fn icon_pack_menu() -> gio::Menu {
+    let m = gio::Menu::new();
+    let mut choices = vec![("System Default".to_string(), String::new()), ("Luma".to_string(), "luma".to_string())];
+    choices.extend(crate::application::icons::installed_packs().into_iter().map(|n| (n.clone(), n)));
+    for (label, val) in choices {
+        let it = gio::MenuItem::new(Some(&label), None);
+        it.set_action_and_target_value(Some("win.icon-pack"), Some(&val.to_variant()));
+        m.append_item(&it);
+    }
+    m
+}
+
 pub fn apply_color_scheme(name: &str) {
     adw::StyleManager::default().set_color_scheme(match name {
         "light" => adw::ColorScheme::ForceLight,
@@ -196,9 +209,9 @@ impl WinCtl {
         };
         let nav_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         nav_box.add_css_class("fm-seg");
-        nav_box.append(&mk_btn("luma-back-symbolic", "Back", "win.back"));
-        nav_box.append(&mk_btn("luma-forward-symbolic", "Forward", "win.forward"));
-        nav_box.append(&mk_btn("luma-up-symbolic", "Parent folder", "win.parent"));
+        nav_box.append(&mk_btn(crate::application::icons::themed("luma-back-symbolic"), "Back", "win.back"));
+        nav_box.append(&mk_btn(crate::application::icons::themed("luma-forward-symbolic"), "Forward", "win.forward"));
+        nav_box.append(&mk_btn(crate::application::icons::themed("luma-up-symbolic"), "Parent folder", "win.parent"));
 
         let mk_view = |icon: &str, tip: &str| {
             let b = gtk::ToggleButton::new();
@@ -207,10 +220,10 @@ impl WinCtl {
             b
         };
         let view_btns = vec![
-            mk_view("luma-view-grid-symbolic", "Icons"),
-            mk_view("luma-view-list-symbolic", "List"),
-            mk_view("luma-view-columns-symbolic", "Columns"),
-            mk_view("luma-view-gallery-symbolic", "Gallery"),
+            mk_view(crate::application::icons::themed("luma-view-grid-symbolic"), "Icons"),
+            mk_view(crate::application::icons::themed("luma-view-list-symbolic"), "List"),
+            mk_view(crate::application::icons::themed("luma-view-columns-symbolic"), "Columns"),
+            mk_view(crate::application::icons::themed("luma-view-gallery-symbolic"), "Gallery"),
         ];
         for b in &view_btns[1..] {
             b.set_group(Some(&view_btns[0]));
@@ -226,7 +239,7 @@ impl WinCtl {
         let sort_dd = gtk::DropDown::from_strings(&labels);
         sort_dd.set_tooltip_text(Some("Sort by"));
         let sort_dir = gtk::ToggleButton::new();
-        sort_dir.set_icon_name("luma-sort-asc-symbolic");
+        sort_dir.set_icon_name(crate::application::icons::themed("luma-sort-asc-symbolic"));
         sort_dir.set_tooltip_text(Some("Reverse sort order"));
         let sort_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         sort_dd.set_hexpand(true);
@@ -245,7 +258,7 @@ impl WinCtl {
 
         // One tidy "View options" popover instead of a row of toolbar controls.
         let options_btn = gtk::MenuButton::new();
-        options_btn.set_icon_name("luma-options-symbolic");
+        options_btn.set_icon_name(crate::application::icons::themed("luma-options-symbolic"));
         options_btn.set_tooltip_text(Some("View options"));
         let sort_title = gtk::Label::new(Some("Sort by"));
         sort_title.set_xalign(0.0);
@@ -265,13 +278,13 @@ impl WinCtl {
         options_btn.set_popover(Some(&opts_pop));
 
         let recent_btn = gtk::MenuButton::new();
-        recent_btn.set_icon_name("luma-history-symbolic");
+        recent_btn.set_icon_name(crate::application::icons::themed("luma-history-symbolic"));
         recent_btn.set_tooltip_text(Some("Recent folders and files"));
 
         let sidebar_btn = gtk::ToggleButton::new();
-        sidebar_btn.set_icon_name("luma-sidebar-symbolic");
+        sidebar_btn.set_icon_name(crate::application::icons::themed("luma-sidebar-symbolic"));
         sidebar_btn.set_tooltip_text(Some("Toggle sidebar"));
-        let preview_btn = gtk::Button::from_icon_name("luma-eye-symbolic");
+        let preview_btn = gtk::Button::from_icon_name(crate::application::icons::themed("luma-eye-symbolic"));
         preview_btn.set_tooltip_text(Some("Quick Look (Space)"));
         preview_btn.set_action_name(Some("win.quick-preview"));
 
@@ -295,6 +308,7 @@ impl WinCtl {
         }
         let s_theme = gio::Menu::new();
         s_theme.append_submenu(Some("Appearance"), &theme);
+        s_theme.append_submenu(Some("Icon Pack"), &icon_pack_menu());
         s_theme.append(Some("Toggle Sidebar"), Some("win.toggle-sidebar"));
         main_menu.append_section(None, &s_theme);
         let s2 = gio::Menu::new();
@@ -304,7 +318,7 @@ impl WinCtl {
         s2.append(Some("About"), Some("win.about"));
         main_menu.append_section(None, &s2);
         let menu_btn = gtk::MenuButton::new();
-        menu_btn.set_icon_name("luma-more-symbolic");
+        menu_btn.set_icon_name(crate::application::icons::themed("luma-more-symbolic"));
         menu_btn.set_menu_model(Some(&main_menu));
 
         let title = adw::WindowTitle::new("", "");
@@ -493,6 +507,21 @@ impl WinCtl {
                 persistence::save_color_scheme(&st.db, &st.prefs, &v);
             });
             win.add_action(&cs);
+            let cur = self.state.prefs.icon_pack.borrow().clone();
+            let ip = gio::SimpleAction::new_stateful("icon-pack", Some(glib::VariantTy::STRING), &cur.to_variant());
+            let st = self.state.clone();
+            let w = Rc::downgrade(self);
+            ip.connect_activate(move |a, p| {
+                let v = p.and_then(|v| v.get::<String>()).unwrap_or_default();
+                a.set_state(&v.to_variant());
+                crate::application::icons::apply(&v);
+                persistence::save_icon_pack(&st.db, &st.prefs, &v);
+                // File icons are chosen when rows are built, so rebuild the visible folder.
+                if let Some(p) = w.upgrade().and_then(|c| c.active_pane()) {
+                    p.refresh();
+                }
+            });
+            win.add_action(&ip);
         }
         let (w1, w2) = (weak.clone(), weak.clone());
         // Free space and folder sizes change when operations finish.
@@ -598,9 +627,9 @@ impl WinCtl {
                 p.set_sort(SortKey::ALL[c.sort_dd.selected() as usize], !c.sort_dir.is_active());
             }
             c.sort_dir.set_icon_name(if c.sort_dir.is_active() {
-                "luma-sort-desc-symbolic"
+                crate::application::icons::themed("luma-sort-desc-symbolic")
             } else {
-                "luma-sort-asc-symbolic"
+                crate::application::icons::themed("luma-sort-asc-symbolic")
             });
         };
         let a = apply_sort.clone();
@@ -1615,7 +1644,11 @@ impl WinCtl {
         let (key, asc) = p.sort();
         self.sort_dd.set_selected(SortKey::ALL.iter().position(|k| *k == key).unwrap_or(0) as u32);
         self.sort_dir.set_active(!asc);
-        self.sort_dir.set_icon_name(if asc { "luma-sort-asc-symbolic" } else { "luma-sort-desc-symbolic" });
+        self.sort_dir.set_icon_name(if asc {
+            crate::application::icons::themed("luma-sort-asc-symbolic")
+        } else {
+            crate::application::icons::themed("luma-sort-desc-symbolic")
+        });
         self.hidden_btn.set_active(p.hidden());
         if self.search.text() != p.query() {
             self.search.set_text(&p.query());

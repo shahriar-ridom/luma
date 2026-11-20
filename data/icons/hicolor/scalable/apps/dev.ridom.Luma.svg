@@ -1,1 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fb4ff"/><stop offset="1" stop-color="#3d5fc4"/></linearGradient><linearGradient id="back" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".62"/><stop offset="1" stop-color="#ffffff" stop-opacity=".38"/></linearGradient><linearGradient id="front" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe8ff"/></linearGradient></defs><rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg)"/><path d="M26 44a8 8 0 0 1 8-8h22.5a6 6 0 0 1 4.6 2.1l5.4 6.4H94a8 8 0 0 1 8 8v8H26z" fill="url(#back)"/><path d="M26 56a8 8 0 0 1 8-8h60a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8H34a8 8 0 0 1-8-8z" fill="url(#front)"/><path d="M96 14l2.6 8.4L107 25l-8.4 2.6L96 36l-2.6-8.4L85 25l8.4-2.6z" fill="#ffffff"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b3e45"/><stop offset="1" stop-color="#2a2c31"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e4e6ea"/><stop offset=".45" stop-color="#c3c6cd"/><stop offset="1" stop-color="#5a5e69"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".9"/><stop offset="1" stop-color="#ffffff" stop-opacity=".12"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.2"/></filter>
+    <filter id="drop" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="2.6"/></filter>
+    <clipPath id="front">
+      <path d="M8 46Q8 37.5 16 37.5H58Q63 37.5 67 41L76 50Q78.5 52.5 82 52.5H112Q120 52.5 120 60L116 98Q115.5 106 108 106H20Q12.5 106 12 98Z"/>
+    </clipPath>
+  </defs>
+  <!-- shadow -->
+  <ellipse cx="64" cy="109" rx="46" ry="5" fill="#000" opacity=".28" filter="url(#drop)"/>
+  <!-- back panel -->
+  <rect x="13" y="20" width="102" height="72" rx="10" fill="url(#panel)" stroke="#202226" stroke-width="1"/>
+  <!-- papers -->
+  <g transform="rotate(6 100 50)"><rect x="88" y="33" width="24" height="38" rx="5" fill="#cdd1d9"/>
+    <path d="M93 46h14" stroke="#9097a6" stroke-width="3" stroke-linecap="round"/></g>
+  <rect x="70" y="26" width="26" height="40" rx="5" fill="#dfe2e8"/>
+  <path d="M76 38h14M76 48h14" stroke="#9097a6" stroke-width="3" stroke-linecap="round"/>
+  <g transform="rotate(-8 48 46)"><rect x="22" y="24" width="56" height="44" rx="6" fill="#f1f3f6"/>
+    <path d="M31 36h34" stroke="#9097a6" stroke-width="3.4" stroke-linecap="round"/></g>
+  <!-- glass folder -->
+  <g clip-path="url(#front)">
+    <rect x="0" y="30" width="128" height="80" fill="url(#glass)"/>
+    <rect x="25" y="50" width="76" height="44" rx="12" fill="#eceef1" opacity=".8" filter="url(#soft)"/>
+    <g opacity=".5" stroke="#9097a6" stroke-width="2.2" stroke-linecap="round">
+      <path d="M32 58h24M32 64h22M32 70h24M62 58h22M62 64h20"/></g>
+  </g>
+  <path d="M8 46Q8 37.5 16 37.5H58Q63 37.5 67 41L76 50Q78.5 52.5 82 52.5H112Q120 52.5 120 60L116 98Q115.5 106 108 106H20Q12.5 106 12 98Z"
+        fill="none" stroke="url(#rim)" stroke-width="1.2"/>
+  <!-- mark -->
+  <path d="M56 70V86H70" fill="none" stroke="#2c2e34" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M74 62Q75 69 81 70Q75 71 74 78Q73 71 67 70Q73 69 74 62Z" fill="#2c2e34"/>
+</svg>

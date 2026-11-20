@@ -22,6 +22,8 @@ pub fn load(db: &Database) -> Preferences {
             *p.terminal.borrow_mut() = v;
         } else if k == "color_scheme" {
             *p.color_scheme.borrow_mut() = v;
+        } else if k == "icon_pack" {
+            *p.icon_pack.borrow_mut() = v;
         } else if k == "show_hidden" {
             *p.show_hidden.borrow_mut() = v == "1";
         }
@@ -51,6 +53,11 @@ pub fn save_view(db: &Database, prefs: &Preferences, view: &str) {
 pub fn save_hidden(db: &Database, prefs: &Preferences, hidden: bool) {
     *prefs.show_hidden.borrow_mut() = hidden;
     let _ = db.set_preference("show_hidden", if hidden { "1" } else { "0" });
+}
+
+pub fn save_icon_pack(db: &Database, prefs: &Preferences, pack: &str) {
+    *prefs.icon_pack.borrow_mut() = pack.to_string();
+    let _ = db.set_preference("icon_pack", pack);
 }
 
 pub fn save_color_scheme(db: &Database, prefs: &Preferences, scheme: &str) {

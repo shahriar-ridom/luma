@@ -148,15 +148,8 @@ write("places", "luma-folder", '<svg xmlns="http://www.w3.org/2000/svg" width="6
       '<path d="M5 16a5 5 0 0 1 5-5h14.2a4 4 0 0 1 3 1.4l3.3 3.8H54a5 5 0 0 1 5 5V47a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z" fill="url(#b)"/>'
       '<path d="M5 26a5 5 0 0 1 5-5h44a5 5 0 0 1 5 5v21a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z" fill="url(#f)"/>'
       '<path d="M10.5 21.6h43" stroke="#fff" stroke-opacity=".55" stroke-width="1.4" stroke-linecap="round"/></svg>\n')
-# ---- application icon: a luminous folder ----
-write("apps", "dev.ridom.Luma", '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><defs>'
-      '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fb4ff"/><stop offset="1" stop-color="#3d5fc4"/></linearGradient>'
-      '<linearGradient id="back" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".62"/><stop offset="1" stop-color="#ffffff" stop-opacity=".38"/></linearGradient>'
-      '<linearGradient id="front" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe8ff"/></linearGradient></defs>'
-      '<rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg)"/>'
-      '<path d="M26 44a8 8 0 0 1 8-8h22.5a6 6 0 0 1 4.6 2.1l5.4 6.4H94a8 8 0 0 1 8 8v8H26z" fill="url(#back)"/>'
-      '<path d="M26 56a8 8 0 0 1 8-8h60a8 8 0 0 1 8 8v36a8 8 0 0 1-8 8H34a8 8 0 0 1-8-8z" fill="url(#front)"/>'
-      '<path d="M96 14l2.6 8.4L107 25l-8.4 2.6L96 36l-2.6-8.4L85 25l8.4-2.6z" fill="#ffffff"/></svg>\n')
+# ---- application icon: hand-drawn (frosted-glass folder), committed as
+# data/icons/hicolor/scalable/apps/dev.ridom.Luma.svg; only rasterised here.
 # AppImage's appimagetool and some desktops need a raster icon.
 import shutil, subprocess
 if shutil.which("rsvg-convert"):

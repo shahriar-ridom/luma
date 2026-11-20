@@ -136,6 +136,7 @@ pub fn build(state: &AppState) -> gio::Menu {
     view.append_section(None, &toggles);
     let theme = gio::Menu::new();
     theme.append_submenu(Some("Appearance"), &appearance);
+    theme.append_submenu(Some("Icon Pack"), &crate::ui::window::icon_pack_menu());
     view.append_section(None, &theme);
     view.append_section(None, &section(state, &[("Refresh", "refresh")]));
     bar.append_submenu(Some("_View"), &view);

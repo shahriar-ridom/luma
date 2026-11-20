@@ -355,14 +355,14 @@ impl Sidebar {
 
         let path = |p: PathBuf| (Target::Path(p.clone()), Some(p));
         let (t, p) = path(glib::home_dir());
-        self.add("Favorites", "luma-home-symbolic", "Home", t, p, None, vec![]);
+        self.add("Favorites", crate::application::icons::themed("luma-home-symbolic"), "Home", t, p, None, vec![]);
         for (dir, icon, name) in [
-            (UserDirectory::Desktop, "luma-desktop-symbolic", "Desktop"),
-            (UserDirectory::Documents, "luma-documents-symbolic", "Documents"),
-            (UserDirectory::Downloads, "luma-downloads-symbolic", "Downloads"),
-            (UserDirectory::Pictures, "luma-pictures-symbolic", "Pictures"),
-            (UserDirectory::Videos, "luma-videos-symbolic", "Videos"),
-            (UserDirectory::Music, "luma-music-symbolic", "Music"),
+            (UserDirectory::Desktop, crate::application::icons::themed("luma-desktop-symbolic"), "Desktop"),
+            (UserDirectory::Documents, crate::application::icons::themed("luma-documents-symbolic"), "Documents"),
+            (UserDirectory::Downloads, crate::application::icons::themed("luma-downloads-symbolic"), "Downloads"),
+            (UserDirectory::Pictures, crate::application::icons::themed("luma-pictures-symbolic"), "Pictures"),
+            (UserDirectory::Videos, crate::application::icons::themed("luma-videos-symbolic"), "Videos"),
+            (UserDirectory::Music, crate::application::icons::themed("luma-music-symbolic"), "Music"),
         ] {
             if let Some(p) = glib::user_special_dir(dir).filter(|p| p.is_dir()) {
                 let (t, p) = path(p);
@@ -388,7 +388,7 @@ impl Sidebar {
                 ),
             ];
             // User-added favorites follow the built-in ones in the same section.
-            self.add("Favorites", "luma-folder-symbolic", &b.name, t, p, None, menu);
+            self.add("Favorites", crate::application::icons::themed("luma-folder-symbolic"), &b.name, t, p, None, menu);
             self.make_reorderable(id);
         }
 
@@ -403,11 +403,19 @@ impl Sidebar {
                 }
             }),
         )];
-        self.add("Favorites", "luma-trash-symbolic", "Trash", Target::Path(trash.clone()), Some(trash), None, menu);
+        self.add(
+            "Favorites",
+            crate::application::icons::themed("luma-trash-symbolic"),
+            "Trash",
+            Target::Path(trash.clone()),
+            Some(trash),
+            None,
+            menu,
+        );
 
         // Devices.
         let (t, p) = path(PathBuf::from("/"));
-        self.add("Devices", "luma-drive-symbolic", "Computer", t, p, None, vec![]);
+        self.add("Devices", crate::application::icons::themed("luma-drive-symbolic"), "Computer", t, p, None, vec![]);
         let vm = gio::VolumeMonitor::get();
         let mut net_mounts = Vec::new();
         for m in vm.mounts().into_iter().filter(|m| !m.is_shadowed()) {
@@ -417,7 +425,7 @@ impl Sidebar {
                     let suffix = self.eject_widget(&m);
                     self.add(
                         "Devices",
-                        "luma-removable-symbolic",
+                        crate::application::icons::themed("luma-removable-symbolic"),
                         &m.name(),
                         Target::Path(p.clone()),
                         Some(p),
@@ -433,7 +441,7 @@ impl Sidebar {
             if v.get_mount().is_none() && v.can_mount() {
                 self.add(
                     "Devices",
-                    "luma-removable-symbolic",
+                    crate::application::icons::themed("luma-removable-symbolic"),
                     &v.name(),
                     Target::Volume(v.clone()),
                     None,
@@ -465,7 +473,7 @@ impl Sidebar {
             let live_path = live.and_then(|m| m.root().path());
             self.add(
                 "Network",
-                "luma-server-symbolic",
+                crate::application::icons::themed("luma-server-symbolic"),
                 &c.name,
                 Target::Connection(c.uri.clone()),
                 live_path,
@@ -480,16 +488,32 @@ impl Sidebar {
             }
             let p = m.root().path();
             let t = p.clone().map(Target::Path).unwrap_or(Target::ConnectNew);
-            self.add("Network", "luma-network-symbolic", &m.name(), t, p, self.eject_widget(m), vec![]);
+            self.add(
+                "Network",
+                crate::application::icons::themed("luma-network-symbolic"),
+                &m.name(),
+                t,
+                p,
+                self.eject_widget(m),
+                vec![],
+            );
         }
-        self.add("Network", "luma-plus-symbolic", "Connect to Server…", Target::ConnectNew, None, None, vec![]);
+        self.add(
+            "Network",
+            crate::application::icons::themed("luma-plus-symbolic"),
+            "Connect to Server…",
+            Target::ConnectNew,
+            None,
+            None,
+            vec![],
+        );
 
         // Google Drive accounts.
         for r in self.cloud.borrow().iter() {
             let (name, mp) = (r.name.clone(), cloud::mount_point(&r.name));
             let mounted = cloud::is_mounted(&name);
             let suffix = mounted.then(|| {
-                let b = gtk::Button::from_icon_name("luma-eject-symbolic");
+                let b = gtk::Button::from_icon_name(crate::application::icons::themed("luma-eject-symbolic"));
                 b.add_css_class("flat");
                 b.set_valign(gtk::Align::Center);
                 b.set_tooltip_text(Some("Disconnect"));
@@ -513,7 +537,7 @@ impl Sidebar {
             let menu: MenuItems = vec![("Remove Account…".into(), Rc::new(move || Self::remove_cloud(&w, n2.clone())))];
             self.add(
                 "Google Drive",
-                "luma-cloud-symbolic",
+                crate::application::icons::themed("luma-cloud-symbolic"),
                 &name,
                 Target::Cloud(name.clone()),
                 mounted.then_some(mp),
@@ -521,12 +545,28 @@ impl Sidebar {
                 menu,
             );
         }
-        self.add("Google Drive", "luma-plus-symbolic", "Add Google Drive…", Target::AddCloud, None, None, vec![]);
+        self.add(
+            "Google Drive",
+            crate::application::icons::themed("luma-plus-symbolic"),
+            "Add Google Drive…",
+            Target::AddCloud,
+            None,
+            None,
+            vec![],
+        );
 
         // Tags.
         for (tag, count) in self.state.db.all_tags().unwrap_or_default() {
             let row_label = format!("{tag} ({count})");
-            self.add("Tags", "luma-tag-symbolic", &row_label, Target::Tag(tag.clone()), None, None, vec![]);
+            self.add(
+                "Tags",
+                crate::application::icons::themed("luma-tag-symbolic"),
+                &row_label,
+                Target::Tag(tag.clone()),
+                None,
+                None,
+                vec![],
+            );
             if let Some(row) = self.list.last_child().and_downcast::<gtk::ListBoxRow>()
                 && let Some(img) =
                     row.child().and_downcast::<gtk::Box>().and_then(|b| b.first_child()).and_downcast::<gtk::Image>()
@@ -544,7 +584,7 @@ impl Sidebar {
         if !(m.can_unmount() || m.can_eject()) {
             return None;
         }
-        let b = gtk::Button::from_icon_name("luma-eject-symbolic");
+        let b = gtk::Button::from_icon_name(crate::application::icons::themed("luma-eject-symbolic"));
         b.add_css_class("flat");
         b.set_valign(gtk::Align::Center);
         b.set_tooltip_text(Some(if m.can_eject() { "Eject" } else { "Unmount" }));

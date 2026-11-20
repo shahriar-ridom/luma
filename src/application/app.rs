@@ -38,10 +38,18 @@ pub fn run() -> glib::ExitCode {
             gtk::style_context_add_provider_for_display(&d, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
             // Our icon family ships inside the binary (and in packages).
             match crate::application::resources::icon_search_path(&glib::user_cache_dir()) {
-                Ok(dir) => gtk::IconTheme::for_display(&d).add_search_path(dir),
+                Ok(dir) => {
+                    // First, so this build's own app icon beats an older installed copy.
+                    let theme = gtk::IconTheme::for_display(&d);
+                    let mut paths = vec![dir];
+                    paths.extend(theme.search_path());
+                    let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+                    theme.set_search_path(&refs);
+                }
                 Err(e) => tracing::warn!("could not unpack icons: {e}"),
             }
         }
+        crate::application::icons::apply(&ready(&opening).prefs.icon_pack.borrow());
         gtk::Window::set_default_icon_name(APP_ID);
     });
     // Quit closes every window through its own close request, so a window with

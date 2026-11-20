@@ -71,7 +71,7 @@ pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>, op
 
     let page = adw::PreferencesPage::new();
     page.set_title("General");
-    page.set_icon_name(Some("luma-documents-symbolic"));
+    page.set_icon_name(Some(crate::application::icons::themed("luma-documents-symbolic")));
     let group = adw::PreferencesGroup::new();
     page.add(&group);
     dialog.add(&page);
@@ -306,7 +306,7 @@ fn permissions_page(
 ) {
     let page = adw::PreferencesPage::new();
     page.set_title("Permissions");
-    page.set_icon_name(Some("luma-lock-symbolic"));
+    page.set_icon_name(Some(crate::application::icons::themed("luma-lock-symbolic")));
     let mode0 = md.mode() & 0o7777;
     let editable = permissions::can_chmod(md);
 

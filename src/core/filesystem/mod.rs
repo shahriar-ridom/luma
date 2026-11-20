@@ -200,9 +200,22 @@ pub fn icon_name(mime: &str, is_dir: bool) -> &'static str {
 }
 
 pub fn icon_for(mime: &str, is_dir: bool) -> gio::Icon {
-    // Deliberately no fallback names: GTK would look them up in the user's
-    // theme first and our own icons would never win.
-    gio::ThemedIcon::new(icon_name(mime, is_dir)).upcast()
+    let own = icon_name(mime, is_dir);
+    if crate::application::icons::builtin_only() {
+        return gio::ThemedIcon::new(own).upcast();
+    }
+    // The active pack's icon for the type, with our own as the last resort.
+    let mut names: Vec<String> = if is_dir {
+        vec!["folder".into()]
+    } else {
+        gio::content_type_get_icon(mime)
+            .downcast::<gio::ThemedIcon>()
+            .map(|t| t.names().iter().map(|n| n.to_string()).collect())
+            .unwrap_or_default()
+    };
+    names.push(own.into());
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    gio::ThemedIcon::from_names(&refs).upcast()
 }
 
 /// The entry's icon, with a link emblem for symbolic links.
