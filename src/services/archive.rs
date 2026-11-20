@@ -334,8 +334,25 @@ fn place(archive: &Path, stage: &Path, dest_parent: &Path) -> Result<PathBuf, Ar
     Err(ArchiveError::Failed("could not find a free folder name".into()))
 }
 
-/// Create `out` from `names` (relative to `base_dir`). Writes to a temporary
-/// `.part` file and renames on success; refuses to overwrite `out`.
+/// Reserve a hidden temporary file next to `out`. The name is unique and made
+/// with `create_new`, so a user's own `out.part` (a half-finished download,
+/// say) is never truncated, written into or deleted.
+fn temp_output(out: &Path) -> Result<PathBuf, ArchiveError> {
+    let dir = out.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let pid = std::process::id();
+    for n in 0u32..1000 {
+        let p = dir.join(format!(".luma-archive-{pid}-{n}.part"));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(_) => return Ok(p), // bsdtar -cf truncates and reuses it
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(ArchiveError::Failed(e.to_string())),
+        }
+    }
+    Err(ArchiveError::Failed("could not create a temporary file".into()))
+}
+
+/// Create `out` from `names` (relative to `base_dir`). Writes to a hidden
+/// temporary file and renames on success; refuses to overwrite `out`.
 pub fn create(
     format: Format,
     level: Level,
@@ -347,7 +364,7 @@ pub fn create(
     if out.exists() {
         return Err(ArchiveError::Failed(format!("{} already exists", out.display())));
     }
-    let part = PathBuf::from(format!("{}.part", out.display()));
+    let part = temp_output(out)?;
     let (n_fast, n_norm, n_best) = match format {
         Format::TarZst => (1, 3, 19),
         _ => (1, 6, 9),
@@ -408,6 +425,24 @@ mod tests {
     fn no_leftovers(dir: &Path) {
         let left: Vec<_> = fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name()).collect();
         assert!(left.is_empty(), "left behind: {left:?}");
+    }
+
+    #[test]
+    fn create_never_touches_a_users_part_file() {
+        let root = tmp("archive-part");
+        fs::write(root.join("a.txt"), "hello").unwrap();
+        fs::write(root.join("out.zip.part"), "PRECIOUS USER DATA").unwrap();
+        let cancel = AtomicBool::new(false);
+        create(Format::Zip, Level::Normal, &root, &["a.txt".into()], &root.join("out.zip"), &cancel).unwrap();
+        assert_eq!(fs::read_to_string(root.join("out.zip.part")).unwrap(), "PRECIOUS USER DATA");
+        assert!(root.join("out.zip").exists());
+        // A failed run keeps it too, and leaves no temporary file of its own.
+        let bad = create(Format::Zip, Level::Normal, &root, &["missing".into()], &root.join("b.zip"), &cancel);
+        assert!(bad.is_err());
+        assert_eq!(fs::read_to_string(root.join("out.zip.part")).unwrap(), "PRECIOUS USER DATA");
+        let mut left: Vec<_> = fs::read_dir(&root).unwrap().flatten().map(|e| e.file_name()).collect();
+        left.sort();
+        assert_eq!(left, ["a.txt", "out.zip", "out.zip.part"]);
     }
 
     #[test]

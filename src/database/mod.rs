@@ -24,6 +24,15 @@ impl Database {
         Self::init(conn)
     }
 
+    /// Overwrite freed pages and empty the write-ahead log, so rows that were
+    /// just changed or deleted (a scrubbed password) cannot be read back from
+    /// the file. Best effort.
+    pub fn purge_deleted(&self) {
+        let _ = self.conn.pragma_update(None, "secure_delete", "ON");
+        let _ = self.conn.execute_batch("VACUUM;");
+        let _ = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+    }
+
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }

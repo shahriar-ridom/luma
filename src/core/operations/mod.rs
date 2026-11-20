@@ -425,12 +425,23 @@ fn transfer(ctx: &mut Ctx, src: &gio::File, dest_dir: &gio::File, mv: bool) -> b
         return copy_tree(ctx, src, &dst, overwrite);
     }
 
+    // Two folders with the same name: merge them child by child, asking about
+    // each conflict, instead of failing with "File exists".
+    if !overwrite && file_type(&dst) == gio::FileType::Directory && file_type(src) == gio::FileType::Directory {
+        return move_merge(ctx, src, &dst);
+    }
+    move_one(ctx, src, &dst, overwrite)
+}
+
+/// Move one item to exactly `dst`. Folders that cannot be renamed (another
+/// file system) are copied and then deleted, but only after a complete copy.
+fn move_one(ctx: &mut Ctx, src: &gio::File, dst: &gio::File, overwrite: bool) -> bool {
     let mut flags = gio::FileCopyFlags::NOFOLLOW_SYMLINKS | gio::FileCopyFlags::ALL_METADATA;
     if overwrite {
         flags |= gio::FileCopyFlags::OVERWRITE;
     }
     let cancel = ctx.cancel.clone();
-    match src.move_(&dst, flags, Some(&cancel), None) {
+    match src.move_(dst, flags, Some(&cancel), None) {
         Ok(()) => {
             ctx.p.items_done += 1;
             true
@@ -438,7 +449,50 @@ fn transfer(ctx: &mut Ctx, src: &gio::File, dest_dir: &gio::File, mv: bool) -> b
         Err(e) if e.matches(gio::IOErrorEnum::WouldRecurse) || e.matches(gio::IOErrorEnum::WouldMerge) => {
             // Cross-device folder or merge: copy everything, then delete the
             // source only if the whole copy succeeded.
-            if copy_tree(ctx, src, &dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src, false) } else { false }
+            if copy_tree(ctx, src, dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src, false) } else { false }
+        }
+        Err(e) => {
+            ctx.error(src, &e);
+            false
+        }
+    }
+}
+
+/// Move the contents of folder `src` into the existing folder `dst`. The
+/// source folder is removed only if everything in it was moved.
+fn move_merge(ctx: &mut Ctx, src: &gio::File, dst: &gio::File) -> bool {
+    let cancel = ctx.cancel.clone();
+    let names: Vec<_> = match src.enumerate_children("standard::name", NOFOLLOW, Some(&cancel)) {
+        Ok(en) => en.flatten().map(|i| i.name()).collect(),
+        Err(e) => {
+            ctx.error(src, &e);
+            return false;
+        }
+    };
+    let mut ok = true;
+    for name in names {
+        if ctx.cancelled() {
+            return false;
+        }
+        let csrc = src.child(&name);
+        match ctx.resolve(&csrc, dst.child(&name)) {
+            Resolved::Proceed { dst: cdst, overwrite } => {
+                let both_dirs = !overwrite
+                    && file_type(&cdst) == gio::FileType::Directory
+                    && file_type(&csrc) == gio::FileType::Directory;
+                ok &= if both_dirs { move_merge(ctx, &csrc, &cdst) } else { move_one(ctx, &csrc, &cdst, overwrite) };
+            }
+            Resolved::Skip => ok = false,
+            Resolved::Cancel => return false,
+        }
+    }
+    if !ok {
+        return false;
+    }
+    match src.delete(Some(&cancel)) {
+        Ok(()) => {
+            ctx.p.items_done += 1;
+            true
         }
         Err(e) => {
             ctx.error(src, &e);
@@ -656,15 +710,51 @@ mod tests {
     }
 
     #[test]
+    fn move_onto_same_named_folder_merges() {
+        let (a, b) = setup("move-merge");
+        fs::create_dir_all(b.join("dir")).unwrap();
+        fs::write(b.join("dir/old.txt"), "old").unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, n) = run_op(req, Resolution::Skip);
+        assert_eq!(n, 0, "nothing inside conflicts");
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert!(s.failed_sources.is_empty());
+        assert_eq!(fs::read_to_string(b.join("dir/old.txt")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
+        assert!(!a.join("dir").exists(), "the emptied source folder is removed");
+        assert!(!s.undoable, "a merge cannot be undone");
+    }
+
+    #[test]
+    fn move_merge_asks_about_each_conflict() {
+        let (a, b) = setup("move-merge-ask");
+        fs::create_dir_all(b.join("dir/sub")).unwrap();
+        fs::write(b.join("dir/f.txt"), "old").unwrap();
+        fs::write(b.join("dir/sub/g.txt"), "old-g").unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, n) = run_op(req.clone(), Resolution::Replace);
+        assert_eq!(n, 2);
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
+        assert!(!a.join("dir").exists());
+    }
+
+    #[test]
     fn move_and_skip_keeps_source() {
         let (a, b) = setup("move");
         fs::create_dir_all(b.join("dir")).unwrap();
         fs::write(b.join("dir/f.txt"), "old").unwrap();
         let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
-        let (s, _) = run_op(req, Resolution::Skip);
-        // Skipped file must not be lost: the source folder still has it.
-        assert!(a.join("dir/f.txt").exists());
+        let (s, n) = run_op(req, Resolution::Skip);
+        assert_eq!(n, 1, "exactly one conflict is asked about: f.txt");
+        // The skipped file must not be lost: the source folder still has it …
+        assert_eq!(fs::read_to_string(a.join("dir/f.txt")).unwrap(), "new");
         assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "old");
+        // … while everything that did not conflict was moved.
+        assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
+        assert!(!a.join("dir/sub").exists());
         assert_eq!(s.failed_sources.len(), 1);
     }
 

@@ -112,7 +112,7 @@ impl RepoStatus {
     }
 }
 
-fn git(root: &Path) -> Command {
+fn base_git(root: &Path) -> Command {
     let mut c = Command::new("git");
     // A repository's own config is untrusted input (it may come from a
     // downloaded archive). Switch off the settings that run programs just
@@ -124,6 +124,61 @@ fn git(root: &Path) -> Command {
     c.stdin(Stdio::null());
     c
 }
+
+/// Filter commands that are safe to keep when a repository's own config
+/// defines them: what `git lfs install --local` writes. They run the
+/// user-installed `git-lfs`, not a program named by the repository.
+const TRUSTED_FILTERS: &[(&str, &str)] =
+    &[("clean", "git-lfs clean -- %f"), ("smudge", "git-lfs smudge -- %f"), ("process", "git-lfs filter-process")];
+
+/// Names of the filter drivers (`filter.<name>.clean|smudge|process`) that the
+/// repository itself defines (`local`, `worktree` or `command` scope, includes
+/// followed) with a command other than [`TRUSTED_FILTERS`]. Git runs these on
+/// `status` and `add`, so they must not run. `None` if the config could not
+/// be read.
+fn repo_filter_drivers(root: &Path) -> Option<Vec<String>> {
+    let mut c = base_git(root);
+    c.args(["config", "--includes", "--show-scope", "--get-regexp", r"^filter\..*\.(clean|smudge|process)$"]);
+    let out = output_with_timeout(c, Duration::from_secs(5))?;
+    // Exit code 1 means "no matches".
+    if !out.status.success() && out.status.code() != Some(1) {
+        return None;
+    }
+    let mut names: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(scope, _)| matches!(*scope, "local" | "worktree" | "command"))
+        .filter_map(|(_, kv)| {
+            // "filter.<name>.<attr> <command>"; the name may contain spaces, the attribute cannot.
+            let (key, value) = kv.split_once(' ').unwrap_or((kv, ""));
+            let (name, attr) = key.strip_prefix("filter")?.rsplit_once('.')?;
+            let trusted = TRUSTED_FILTERS.iter().any(|(a, v)| *a == attr && *v == value);
+            (!trusted).then(|| name.to_string())
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    Some(names)
+}
+
+/// A `git` command for `root` with the repository's own filter commands
+/// blanked. Filters from the user's own config (git-lfs) keep working.
+/// `None` (fail closed) if the repository's config could not be inspected.
+fn git(root: &Path) -> Option<Command> {
+    let drivers = repo_filter_drivers(root)?;
+    let mut c = base_git(root);
+    for d in drivers {
+        // `d` still carries its leading dot: ".name".
+        for attr in ["clean", "smudge", "process"] {
+            c.arg("-c").arg(format!("filter{d}.{attr}="));
+        }
+        // A required filter with no command would abort instead of being skipped.
+        c.arg("-c").arg(format!("filter{d}.required=false"));
+    }
+    Some(c)
+}
+
+const CONFIG_UNREADABLE: &str = "This repository's configuration could not be read";
 
 /// Cheap check that avoids spawning git outside repositories.
 pub fn find_root_fast(dir: &Path) -> Option<PathBuf> {
@@ -237,8 +292,16 @@ pub fn states_for_dir(st: &RepoStatus, dir: &Path) -> HashMap<String, FileState>
 /// Run `git status` in `dir`; `None` if `dir` isn't in a repository.
 pub fn status(dir: &Path) -> Option<RepoStatus> {
     let root = find_root_fast(dir)?;
-    let mut cmd = git(&root);
-    cmd.args(["status", "--porcelain=v2", "--branch", "-z", "--ignored=traditional", "--untracked-files=normal"]);
+    let mut cmd = git(&root)?;
+    cmd.args([
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "-z",
+        "--ignored=traditional",
+        "--untracked-files=normal",
+        "--ignore-submodules=all",
+    ]);
     let out = output_with_timeout(cmd, STATUS_TIMEOUT)?;
     out.status.success().then(|| parse_status(&root, &out.stdout))
 }
@@ -316,7 +379,7 @@ fn run(mut cmd: Command, cancel: &AtomicBool, timeout: Duration) -> Result<Strin
 }
 
 pub fn stage(root: &Path, paths: &[PathBuf]) -> Result<String, String> {
-    let mut c = git(root);
+    let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
     c.args(["add", "--"]).args(paths);
     run(c, &AtomicBool::new(false), Duration::from_secs(60))
 }
@@ -324,25 +387,25 @@ pub fn stage(root: &Path, paths: &[PathBuf]) -> Result<String, String> {
 pub fn unstage(root: &Path, paths: &[PathBuf]) -> Result<String, String> {
     let timeout = Duration::from_secs(60);
     let has_head = {
-        let mut c = git(root);
+        let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
         c.args(["rev-parse", "--verify", "-q", "HEAD"]);
         run(c, &AtomicBool::new(false), timeout).is_ok()
     };
     if has_head {
-        let mut c = git(root);
+        let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
         c.args(["restore", "--staged", "--"]).args(paths);
         return run(c, &AtomicBool::new(false), timeout);
     }
     // No commits yet (nothing to restore from): drop from the index instead.
     // Only here, so a failed restore can never turn into staged deletions.
-    let mut c = git(root);
+    let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
     c.args(["rm", "--cached", "-r", "-q", "--"]).args(paths);
     run(c, &AtomicBool::new(false), timeout)
 }
 
 /// Throw away uncommitted edits to tracked files. Untracked files are never touched.
 pub fn discard(root: &Path, paths: &[PathBuf]) -> Result<String, String> {
-    let mut c = git(root);
+    let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
     c.args(["restore", "--worktree", "--"]).args(paths);
     run(c, &AtomicBool::new(false), Duration::from_secs(60))
 }
@@ -351,19 +414,19 @@ pub fn commit(root: &Path, message: &str) -> Result<String, String> {
     if message.trim().is_empty() {
         return Err("A commit message is required".into());
     }
-    let mut c = git(root);
+    let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
     c.args(["commit", "-m", message]);
     run(c, &AtomicBool::new(false), Duration::from_secs(120))
 }
 
 pub fn pull(root: &Path, cancel: &AtomicBool) -> Result<String, String> {
-    let mut c = git(root);
+    let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
     c.args(["pull", "--ff-only"]);
     run(c, cancel, Duration::from_secs(300))
 }
 
 pub fn push(root: &Path, cancel: &AtomicBool) -> Result<String, String> {
-    let mut c = git(root);
+    let mut c = git(root).ok_or(CONFIG_UNREADABLE)?;
     c.arg("push");
     run(c, cancel, Duration::from_secs(300))
 }
@@ -439,6 +502,61 @@ u UU N... 1 2 3 4 a b c conflict.txt\0\
         sh(&r, &["config", "core.fsmonitor", hook.to_str().unwrap()]);
         assert!(status(&r).is_some());
         assert!(!marker.exists(), "status must not run programs named in the repository's config");
+    }
+
+    #[test]
+    fn repo_filter_drivers_cannot_run_programs() {
+        use std::os::unix::fs::PermissionsExt;
+        let r = repo("git_filter");
+        let marker = r.join("filter-ran");
+        let script = r.join("evil.sh");
+        fs::write(&script, format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display())).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(r.join(".gitattributes"), "* filter=x\n").unwrap();
+        fs::write(r.join("f.txt"), "hi\n").unwrap();
+        sh(&r, &["add", "."]);
+        sh(&r, &["commit", "-qm", "init"]);
+        let _ = fs::remove_file(&marker); // the commit above ran no filter yet
+        sh(&r, &["config", "filter.x.clean", script.to_str().unwrap()]);
+        sh(&r, &["config", "filter.x.required", "true"]);
+        fs::write(r.join("f.txt"), "changed\n").unwrap();
+        let st = status(&r).expect("status still works with the filters switched off");
+        assert!(!marker.exists(), "a clean filter from the repository's config must not run on status");
+        assert!(st.changes.iter().any(|c| c.path == "f.txt"));
+        stage(&r, &[r.join("f.txt")]).unwrap();
+        assert!(!marker.exists(), "nor on add");
+    }
+
+    #[test]
+    fn git_lfs_filters_written_by_lfs_install_are_kept() {
+        let r = repo("git_lfs_kept");
+        for (k, v) in [
+            ("filter.lfs.clean", "git-lfs clean -- %f"),
+            ("filter.lfs.smudge", "git-lfs smudge -- %f"),
+            ("filter.lfs.process", "git-lfs filter-process"),
+            ("filter.evil.clean", "sh -c 'touch x'"),
+            // A look-alike with different arguments is not trusted.
+            ("filter.fake.clean", "git-lfs clean -- %f; touch x"),
+        ] {
+            sh(&r, &["config", k, v]);
+        }
+        assert_eq!(repo_filter_drivers(&r).unwrap(), [".evil", ".fake"]);
+    }
+
+    #[test]
+    fn submodule_state_is_not_inspected() {
+        let r = repo("git_sub_ignore");
+        let src = r.join("src.git");
+        fs::create_dir_all(&src).unwrap();
+        sh(&src, &["init", "-q", "-b", "main"]);
+        fs::write(src.join("a"), "a").unwrap();
+        sh(&src, &["add", "."]);
+        sh(&src, &["-c", "user.name=T", "-c", "user.email=t@e", "commit", "-qm", "i"]);
+        sh(&r, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", src.to_str().unwrap(), "sub"]);
+        commit(&r, "add submodule").unwrap();
+        fs::write(r.join("sub/dirty"), "x").unwrap();
+        let st = status(&r).unwrap();
+        assert!(st.changes.iter().all(|c| c.path != "sub"), "{:?}", st.changes);
     }
 
     #[test]

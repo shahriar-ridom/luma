@@ -9,6 +9,8 @@ pub struct ConnectChoice {
     pub remember: bool,
 }
 
+const NOTE: &str = "Passwords are never saved with the address. You are asked for one when connecting.";
+
 /// Ask for a server address; re-asks (with the reason) until it is valid.
 pub async fn ask(parent: &gtk::Window) -> Option<ConnectChoice> {
     let mut error: Option<String> = None;
@@ -16,8 +18,8 @@ pub async fn ask(parent: &gtk::Window) -> Option<ConnectChoice> {
     loop {
         let hint: Vec<String> = network::PROTOCOLS.iter().map(|(p, l)| format!("{p}:// — {l}")).collect();
         let body = match &error {
-            Some(e) => format!("{e}\n\n{}", hint.join("\n")),
-            None => hint.join("\n"),
+            Some(e) => format!("{e}\n\n{}\n\n{NOTE}", hint.join("\n")),
+            None => format!("{}\n\n{NOTE}", hint.join("\n")),
         };
         let d = adw::AlertDialog::new(Some("Connect to Server"), Some(&body));
         d.add_responses(&[("cancel", "Cancel"), ("ok", "Connect")]);
