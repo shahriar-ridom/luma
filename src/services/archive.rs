@@ -152,18 +152,16 @@ fn bsdtar() -> Command {
     Command::new("bsdtar")
 }
 
-/// Start `cmd`, handing it the passphrase on stdin.
+/// Start `cmd`, handing it `input` on stdin (the passphrase, or the names to
+/// archive).
 ///
-/// The passphrase must never be a command-line argument: every user on the
+/// A passphrase must never be a command-line argument: every user on the
 /// machine can read those. bsdtar asks for it on the terminal when it has one
 /// and falls back to stdin when it has none, so the child gets its own
 /// session (no controlling terminal) and a pipe. That also stops a Luma that
 /// was started from a shell from waiting on that shell's terminal.
-fn spawn_bsdtar(mut cmd: Command, passphrase: Option<&str>) -> Result<std::process::Child, ArchiveError> {
-    if passphrase.is_some_and(|p| p.contains(['\n', '\r'])) {
-        return Err(ArchiveError::Failed("a passphrase can’t contain a line break".into()));
-    }
-    cmd.stdin(if passphrase.is_some() { Stdio::piped() } else { Stdio::null() });
+fn spawn_bsdtar(mut cmd: Command, input: Option<Vec<u8>>) -> Result<std::process::Child, ArchiveError> {
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
     // SAFETY: only `setsid`, which is async-signal-safe, runs between fork and exec.
     unsafe {
         cmd.pre_exec(|| nix::unistd::setsid().map(drop).map_err(std::io::Error::from));
@@ -175,12 +173,26 @@ fn spawn_bsdtar(mut cmd: Command, passphrase: Option<&str>) -> Result<std::proce
             ArchiveError::Failed(e.to_string())
         }
     })?;
-    if let (Some(p), Some(mut stdin)) = (passphrase, child.stdin.take()) {
-        // bsdtar may ask more than once (it retries on a wrong passphrase) or
-        // never (unencrypted archive); a closed pipe is not an error.
-        let _ = stdin.write_all(format!("{p}\n").as_bytes());
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        // On a thread: a long list of names must not block on a full pipe
+        // before the caller starts draining stderr. bsdtar may ask for a
+        // passphrase more than once, or never; a closed pipe is not an error.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
     }
     Ok(child)
+}
+
+/// The stdin bytes for a passphrase (one line).
+fn passphrase_input(passphrase: Option<&str>) -> Result<Option<Vec<u8>>, ArchiveError> {
+    match passphrase {
+        Some(p) if p.contains(['\n', '\r']) => {
+            Err(ArchiveError::Failed("a passphrase can’t contain a line break".into()))
+        }
+        Some(p) => Ok(Some(format!("{p}\n").into_bytes())),
+        None => Ok(None),
+    }
 }
 
 fn classify(stderr: &str) -> ArchiveError {
@@ -194,9 +206,9 @@ fn classify(stderr: &str) -> ArchiveError {
 
 /// Run to completion, polling `cancel`. stderr is drained on a thread so a
 /// chatty tool can never block on a full pipe.
-fn run(mut cmd: Command, passphrase: Option<&str>, cancel: &AtomicBool) -> Result<(), ArchiveError> {
+fn run(mut cmd: Command, input: Option<Vec<u8>>, cancel: &AtomicBool) -> Result<(), ArchiveError> {
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
-    let mut child = spawn_bsdtar(cmd, passphrase)?;
+    let mut child = spawn_bsdtar(cmd, input)?;
     let mut err = child.stderr.take().expect("piped");
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
@@ -225,7 +237,9 @@ fn run(mut cmd: Command, passphrase: Option<&str>, cancel: &AtomicBool) -> Resul
 pub fn list(archive: &Path, passphrase: Option<&str>) -> Result<Vec<Entry>, ArchiveError> {
     let mut cmd = bsdtar();
     cmd.arg("-tvf").arg(archive).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let out = spawn_bsdtar(cmd, passphrase)?.wait_with_output().map_err(|e| ArchiveError::Failed(e.to_string()))?;
+    let out = spawn_bsdtar(cmd, passphrase_input(passphrase)?)?
+        .wait_with_output()
+        .map_err(|e| ArchiveError::Failed(e.to_string()))?;
     if !out.status.success() {
         return Err(classify(&String::from_utf8_lossy(&out.stderr)));
     }
@@ -305,7 +319,7 @@ fn unpack_into(
 ) -> Result<(), ArchiveError> {
     let mut cmd = bsdtar();
     cmd.arg("-xf").arg(archive).arg("-C").arg(stage).arg("--no-same-owner");
-    run(cmd, passphrase, cancel)
+    run(cmd, passphrase_input(passphrase)?, cancel)
 }
 
 /// Move what was unpacked in `stage` to its final place under `dest_parent`.
@@ -383,9 +397,11 @@ pub fn create(
         Format::TarZst => cmd.args(["--zstd", "--options", &format!("zstd:compression-level={lv}")]),
         Format::SevenZ => cmd.args(["--format", "7zip", "--options", &format!("7zip:compression-level={lv}")]),
     };
-    cmd.arg("-cf").arg(&part).arg("-C").arg(base_dir).arg("--");
-    cmd.args(names);
-    match run(cmd, None, cancel) {
+    // The names go in on stdin, NUL-separated and read literally. As arguments,
+    // bsdtar would treat `@name` as "copy the entries of archive `name`".
+    cmd.arg("-cf").arg(&part).arg("-C").arg(base_dir).args(["--null", "-T", "-"]);
+    let list: Vec<u8> = names.iter().flat_map(|n| n.bytes().chain(std::iter::once(0))).collect();
+    match run(cmd, Some(list), cancel) {
         Ok(()) => crate::core::filesystem::rename_noreplace(&part, out).map_err(|e| {
             let _ = std::fs::remove_file(&part);
             ArchiveError::Failed(e.to_string())
@@ -425,6 +441,20 @@ mod tests {
     fn no_leftovers(dir: &Path) {
         let left: Vec<_> = fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name()).collect();
         assert!(left.is_empty(), "left behind: {left:?}");
+    }
+
+    #[test]
+    fn names_starting_with_at_or_dash_are_archived_literally() {
+        let root = tmp("archive-at");
+        fs::write(root.join("@notes.txt"), "at").unwrap();
+        fs::write(root.join("notes.txt"), "plain").unwrap(); // bsdtar would read `@notes.txt` as "the archive notes.txt"
+        fs::write(root.join("-dash.txt"), "dash").unwrap();
+        let cancel = AtomicBool::new(false);
+        let out = root.join("out.tar");
+        create(Format::Tar, Level::Normal, &root, &["@notes.txt".into(), "-dash.txt".into()], &out, &cancel).unwrap();
+        let mut got: Vec<String> = list(&out, None).unwrap().into_iter().map(|e| e.path).collect();
+        got.sort();
+        assert_eq!(got, ["-dash.txt", "@notes.txt"]);
     }
 
     #[test]

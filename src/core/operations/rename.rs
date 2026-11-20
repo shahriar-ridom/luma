@@ -6,9 +6,11 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
+
+use crate::core::filesystem::rename_noreplace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaseMode {
@@ -185,6 +187,29 @@ fn unused_temp_name(dir: &Path, i: usize) -> PathBuf {
         .expect("an unused name exists")
 }
 
+/// Are these two paths the same file? On a case-insensitive file system
+/// (FAT, exFAT, NTFS) `A.TXT` already "exists" when `a.txt` is renamed to it,
+/// because it is the same file.
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    matches!(
+        (fs::symlink_metadata(a), fs::symlink_metadata(b)),
+        (Ok(x), Ok(y)) if x.dev() == y.dev() && x.ino() == y.ino()
+    )
+}
+
+/// Would renaming `from` to `to` replace something else? `to` is free if it
+/// does not exist, is itself being renamed away, or is `from` under another
+/// spelling.
+fn target_blocked(from: &Path, to: &Path, sources: &HashSet<&Path>) -> bool {
+    fs::symlink_metadata(to).is_ok() && !sources.contains(to) && !same_file(from, to)
+}
+
+/// True if `new` differs from `old` only in letter case (`a.txt` → `A.TXT`).
+pub fn is_case_only_change(old: &str, new: &str) -> bool {
+    old != new && old.to_lowercase() == new.to_lowercase()
+}
+
 /// Rename every `(from, to)` pair or none. Targets must not exist unless the
 /// target is itself one of the sources being renamed away.
 pub fn rename_many(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
@@ -198,7 +223,7 @@ pub fn rename_many(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
         if fs::symlink_metadata(from).is_err() {
             return Err(format!("{} no longer exists", from.display()));
         }
-        if fs::symlink_metadata(to).is_ok() && !sources.contains(to.as_path()) {
+        if target_blocked(from, to, &sources) {
             return Err(format!("{} already exists", to.display()));
         }
     }
@@ -221,12 +246,9 @@ pub fn rename_many(pairs: &[(PathBuf, PathBuf)]) -> Result<(), String> {
     // Phase 2: temporary → final. Never overwrite; roll everything back on failure.
     let mut finished: Vec<(PathBuf, PathBuf)> = Vec::new(); // (final, tmp)
     for (_, tmp, to) in &staged {
-        let result: io::Result<()> = if fs::symlink_metadata(to).is_ok() {
-            Err(io::Error::new(io::ErrorKind::AlreadyExists, "already exists"))
-        } else {
-            fs::rename(tmp, to)
-        };
-        if let Err(e) = result {
+        // No gap between checking and renaming: something that appeared in
+        // the meantime is never replaced.
+        if let Err(e) = rename_noreplace(tmp, to) {
             for (fin, t) in finished.iter().rev() {
                 let _ = fs::rename(fin, t);
             }
@@ -248,6 +270,27 @@ mod tests {
 
     fn set(v: &[&str]) -> HashSet<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_case_variant_of_the_same_file_is_not_a_conflict() {
+        let d = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/rename-case");
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("a.txt"), "x").unwrap();
+        fs::write(d.join("other.txt"), "y").unwrap();
+        // A hard link stands in for what a case-insensitive file system reports:
+        // the target name leads to the very same file.
+        fs::hard_link(d.join("a.txt"), d.join("A.TXT")).unwrap();
+        let none = HashSet::new();
+        assert!(!target_blocked(&d.join("a.txt"), &d.join("A.TXT"), &none));
+        assert!(target_blocked(&d.join("a.txt"), &d.join("other.txt"), &none));
+        // Nothing is ever replaced, whatever the pre-check said.
+        assert!(rename_many(&[(d.join("a.txt"), d.join("other.txt"))]).is_err());
+        assert_eq!(fs::read_to_string(d.join("other.txt")).unwrap(), "y");
+        assert!(
+            is_case_only_change("a.txt", "A.TXT") && !is_case_only_change("a", "a") && !is_case_only_change("a", "b")
+        );
     }
 
     #[test]

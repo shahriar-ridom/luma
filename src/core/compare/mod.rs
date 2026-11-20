@@ -73,7 +73,11 @@ fn read_full(r: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
 }
 
 pub fn compare(a: &Path, b: &Path, cancel: &AtomicBool) -> io::Result<Outcome> {
+    // Opening a FIFO blocks until someone writes to it, so look before opening.
     let (ma, mb) = (fs::metadata(a)?, fs::metadata(b)?);
+    if !ma.is_file() || !mb.is_file() {
+        return Err(io::Error::other("only regular files can be compared"));
+    }
     let first = first_difference(a, b, cancel)?;
     if first.is_none() {
         return Ok(Outcome::Identical);
@@ -131,6 +135,22 @@ mod tests {
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn special_files_are_refused_instead_of_hanging() {
+        let d = tmp("compare-fifo");
+        fs::write(d.join("f"), "x").unwrap();
+        let fifo = d.join("fifo");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        for (a, b) in [(fifo.clone(), d.join("f")), (d.join("f"), fifo.clone())] {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(compare(&a, &b, &AtomicBool::new(false)).is_err());
+            });
+            // Opening a FIFO for reading blocks forever; a refusal returns at once.
+            assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(3)), Ok(true), "compare hung or succeeded");
+        }
     }
 
     #[test]

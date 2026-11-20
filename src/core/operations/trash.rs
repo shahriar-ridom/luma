@@ -4,6 +4,7 @@
 //! GIO can trash but cannot say where a file went, so for undo we read the
 //! spec'd layout directly: `<trash>/files/NAME` + `<trash>/info/NAME.trashinfo`.
 
+use crate::core::filesystem::rename_noreplace;
 use std::{
     fs, io,
     os::unix::fs::MetadataExt,
@@ -61,10 +62,14 @@ pub fn find(trash_dir: &Path, topdir: Option<&Path>, orig: &Path) -> Option<Tras
 
 /// Move the trashed item back; refuses to overwrite.
 pub fn restore(t: &Trashed, orig: &Path) -> io::Result<()> {
-    if fs::symlink_metadata(orig).is_ok() {
-        return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} already exists", orig.display())));
-    }
-    fs::rename(&t.file, orig)?;
+    // One atomic step: no gap in which something could appear at `orig`.
+    rename_noreplace(&t.file, orig).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            io::Error::new(e.kind(), format!("{} already exists", orig.display()))
+        } else {
+            e
+        }
+    })?;
     let _ = fs::remove_file(&t.info);
     Ok(())
 }

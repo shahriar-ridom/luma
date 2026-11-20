@@ -5,7 +5,7 @@
 use gtk::gio::{self, prelude::*};
 use std::{cell::RefCell, path::PathBuf};
 
-use super::{rename::rename_many, trash};
+use super::{move_exact, rename::rename_many, trash};
 
 #[derive(Clone, Debug)]
 pub enum UndoAction {
@@ -76,10 +76,9 @@ pub fn perform(action: &UndoAction) -> Result<usize, String> {
         }
         UndoAction::MoveBack(pairs) => {
             for (now, orig) in pairs {
-                let flags = gio::FileCopyFlags::NOFOLLOW_SYMLINKS | gio::FileCopyFlags::ALL_METADATA;
-                match gio::File::for_path(now).move_(&gio::File::for_path(orig), flags, gio::Cancellable::NONE, None) {
+                match move_exact(&gio::File::for_path(now), &gio::File::for_path(orig)) {
                     Ok(()) => n += 1,
-                    Err(e) => errors.push(format!("{}: {}", orig.display(), e.message())),
+                    Err(e) => errors.push(format!("{}: {e}", orig.display())),
                 }
             }
         }
@@ -115,6 +114,28 @@ mod tests {
         assert_eq!(s.peek_label().as_deref(), Some("op58"));
         s.clear();
         assert!(s.pop().is_none());
+    }
+
+    #[test]
+    fn moveback_of_a_folder_works_across_file_systems() {
+        let Some(shm) = super::super::other_fs_dir("undo-xdev") else { return };
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/undo-xdev");
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("folder/sub")).unwrap();
+        fs::write(d.join("folder/a.txt"), "a").unwrap();
+        fs::write(d.join("folder/sub/b.txt"), "b").unwrap();
+        let orig = shm.join("folder");
+        // The original spot is taken: nothing may change.
+        fs::create_dir_all(&orig).unwrap();
+        assert!(perform(&UndoAction::MoveBack(vec![(d.join("folder"), orig.clone())])).is_err());
+        assert!(d.join("folder/sub/b.txt").exists());
+        fs::remove_dir_all(&orig).unwrap();
+        // Free again: the folder goes back to the other drive.
+        assert_eq!(perform(&UndoAction::MoveBack(vec![(d.join("folder"), orig.clone())])).unwrap(), 1);
+        assert_eq!(fs::read_to_string(orig.join("sub/b.txt")).unwrap(), "b");
+        assert_eq!(fs::read_to_string(orig.join("a.txt")).unwrap(), "a");
+        assert!(!d.join("folder").exists());
+        let _ = fs::remove_dir_all(&shm);
     }
 
     #[test]

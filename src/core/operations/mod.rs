@@ -139,19 +139,7 @@ impl Control {
 pub fn spawn(req: OpRequest) -> (Control, async_channel::Receiver<Event>) {
     let (tx, rx) = async_channel::unbounded();
     let control = Control { cancel: gio::Cancellable::new(), paused: Arc::new(AtomicBool::new(false)) };
-    let ctx = Ctx {
-        tx,
-        cancel: control.cancel.clone(),
-        paused: control.paused.clone(),
-        policy: None,
-        p: Progress::default(),
-        errors: Vec::new(),
-        last_emit: Instant::now() - Duration::from_secs(1),
-        done: Vec::new(),
-        last_dst: None,
-        not_undoable: false,
-        disk_full: false,
-    };
+    let ctx = Ctx::new(tx, control.cancel.clone(), control.paused.clone(), None);
     std::thread::Builder::new()
         .name("fm-operation".into())
         .spawn(move || run(ctx, req))
@@ -184,6 +172,34 @@ enum Resolved {
 const NOFOLLOW: gio::FileQueryInfoFlags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
 
 impl Ctx {
+    fn new(
+        tx: async_channel::Sender<Event>,
+        cancel: gio::Cancellable,
+        paused: Arc<AtomicBool>,
+        policy: Option<Resolution>,
+    ) -> Self {
+        Self {
+            tx,
+            cancel,
+            paused,
+            policy,
+            p: Progress::default(),
+            errors: Vec::new(),
+            last_emit: Instant::now() - Duration::from_secs(1),
+            done: Vec::new(),
+            last_dst: None,
+            not_undoable: false,
+            disk_full: false,
+        }
+    }
+
+    /// For work done outside an operation (undo): nothing listens, and
+    /// anything that would need an answer is skipped.
+    fn headless() -> Self {
+        let (tx, _rx) = async_channel::unbounded();
+        Self::new(tx, gio::Cancellable::new(), Arc::new(AtomicBool::new(false)), Some(Resolution::SkipAll))
+    }
+
     fn cancelled(&self) -> bool {
         self.cancel.is_cancelled()
     }
@@ -448,13 +464,60 @@ fn move_one(ctx: &mut Ctx, src: &gio::File, dst: &gio::File, overwrite: bool) ->
         }
         Err(e) if e.matches(gio::IOErrorEnum::WouldRecurse) || e.matches(gio::IOErrorEnum::WouldMerge) => {
             // Cross-device folder or merge: copy everything, then delete the
-            // source only if the whole copy succeeded.
+            // source only if the whole copy succeeded. Both passes visit
+            // every item, and the copy moves the bytes: add that to the
+            // totals (the folder itself was already counted once).
+            let (mut bytes, mut items) = (0, 0);
+            scan(src, &cancel, &mut bytes, &mut items);
+            ctx.p.items_total += (2 * items).saturating_sub(1);
+            ctx.p.total_bytes += bytes;
             if copy_tree(ctx, src, dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src, false) } else { false }
         }
         Err(e) => {
             ctx.error(src, &e);
             false
         }
+    }
+}
+
+/// Move `src` to exactly `dst`, never replacing anything, falling back to copy
+/// and delete across file systems (GIO cannot move a folder between them).
+/// Blocking: call it from a worker thread.
+pub fn move_exact(src: &gio::File, dst: &gio::File) -> Result<(), String> {
+    let flags = gio::FileCopyFlags::NOFOLLOW_SYMLINKS | gio::FileCopyFlags::ALL_METADATA;
+    match src.move_(dst, flags, gio::Cancellable::NONE, None) {
+        Ok(()) => Ok(()),
+        Err(e) if e.matches(gio::IOErrorEnum::WouldRecurse) || e.matches(gio::IOErrorEnum::WouldMerge) => {
+            // Create `dst` ourselves, strictly: if it appeared in the meantime we
+            // stop instead of merging into (and later cleaning up) someone else's folder.
+            if let Err(e) = dst.make_directory(gio::Cancellable::NONE) {
+                return Err(if e.matches(gio::IOErrorEnum::Exists) {
+                    format!("{} already exists", dst.parse_name())
+                } else {
+                    e.message().to_string()
+                });
+            }
+            let mut ctx = Ctx::headless();
+            let reason = |ctx: &Ctx| {
+                if ctx.disk_full {
+                    "not enough space".to_string()
+                } else {
+                    ctx.errors.first().map_or_else(|| "the move failed".to_string(), |e| e.message.clone())
+                }
+            };
+            if !copy_tree(&mut ctx, src, dst, false) {
+                // Nothing was lost: the source is untouched, and everything in `dst` is our own partial copy.
+                let why = reason(&ctx);
+                let _ = delete_tree(&mut Ctx::headless(), dst, false);
+                return Err(why);
+            }
+            if !delete_tree(&mut ctx, src, false) {
+                // The copy is complete; keep it, and say what is left behind.
+                return Err(format!("{}; the original could not be fully removed", reason(&ctx)));
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.message().to_string()),
     }
 }
 
@@ -469,6 +532,7 @@ fn move_merge(ctx: &mut Ctx, src: &gio::File, dst: &gio::File) -> bool {
             return false;
         }
     };
+    ctx.p.items_total += names.len() as u64; // each child counts once, like the folder itself
     let mut ok = true;
     for name in names {
         if ctx.cancelled() {
@@ -641,6 +705,23 @@ fn delete_tree(ctx: &mut Ctx, f: &gio::File, inside: bool) -> bool {
     }
 }
 
+/// A scratch folder on another file system than `target/test-tmp` (tmpfs in
+/// `/dev/shm`), for the cross-device paths; `None` if there is none.
+#[cfg(test)]
+pub(crate) fn other_fs_dir(name: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let here = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
+    std::fs::create_dir_all(&here).ok()?;
+    let there = std::path::PathBuf::from("/dev/shm").join(format!("luma-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&there);
+    std::fs::create_dir_all(&there).ok()?;
+    if std::fs::metadata(&here).ok()?.dev() == std::fs::metadata(&there).ok()?.dev() {
+        let _ = std::fs::remove_dir_all(&there);
+        return None;
+    }
+    Some(there)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,6 +837,52 @@ mod tests {
         assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
         assert!(!a.join("dir/sub").exists());
         assert_eq!(s.failed_sources.len(), 1);
+    }
+
+    /// Like `run_op`, also returning every progress report.
+    fn run_op_progress(req: OpRequest, answer: Resolution) -> (Summary, Vec<Progress>) {
+        let (_c, rx) = spawn(req);
+        let mut seen = Vec::new();
+        loop {
+            match rx.recv_blocking().unwrap() {
+                Event::Conflict { reply, .. } => reply.send(answer).unwrap(),
+                Event::Finished(s) => return (s, seen),
+                Event::Progress(p) => seen.push(p),
+            }
+        }
+    }
+
+    fn assert_never_overshoots(seen: &[Progress]) {
+        assert!(!seen.is_empty());
+        for p in seen {
+            assert!(p.items_done <= p.items_total, "items {}/{}", p.items_done, p.items_total);
+            assert!(p.total_bytes == 0 || p.done_bytes <= p.total_bytes, "bytes {}/{}", p.done_bytes, p.total_bytes);
+        }
+    }
+
+    #[test]
+    fn move_progress_never_overshoots_on_merge_or_cross_device() {
+        let (a, b) = setup("move-progress");
+        fs::create_dir_all(b.join("dir")).unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, seen) = run_op_progress(req, Resolution::Skip);
+        assert!(s.errors.is_empty());
+        assert_never_overshoots(&seen);
+
+        let Some(shm) = other_fs_dir("progress") else { return };
+        fs::create_dir_all(shm.join("src/dir/sub")).unwrap();
+        fs::write(shm.join("src/dir/f.txt"), "new").unwrap();
+        fs::write(shm.join("src/dir/sub/g.txt"), "deep").unwrap();
+        let fresh = a.join("fresh");
+        fs::create_dir_all(&fresh).unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&shm.join("src/dir"))], dest: Some(uri(&fresh)) };
+        let (s, seen) = run_op_progress(req, Resolution::Skip);
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_never_overshoots(&seen);
+        let last = seen.last().unwrap();
+        assert_eq!(last.items_done, last.items_total, "a finished move reports 100%");
+        assert!(fresh.join("dir/sub/g.txt").exists() && !shm.join("src/dir").exists());
+        let _ = fs::remove_dir_all(&shm);
     }
 
     #[test]
