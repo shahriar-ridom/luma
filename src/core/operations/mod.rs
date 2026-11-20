@@ -1073,6 +1073,10 @@ mod tests {
         let (s, _) = run_op(req, Resolution::Skip);
         assert!(s.errors.is_empty(), "{:?}", s.errors);
         assert!(!a.join("dir").exists());
+        // Root bypasses permission checks, so the protection below cannot be observed.
+        if nix::unistd::geteuid().is_root() {
+            return;
+        }
         // A single file in a read-only folder the user did not choose stays protected.
         fs::create_dir_all(a.join("ro")).unwrap();
         fs::write(a.join("ro/keep"), "k").unwrap();
