@@ -1,8 +1,16 @@
 use adw::prelude::*;
 use gtk::{gio, glib};
+use std::{cell::OnceCell, rc::Rc};
 
 use crate::application::state::AppState;
 use crate::ui::window::FmWindow;
+
+/// Filled by `startup`; every later handler (activate, open, D-Bus) reads it.
+type SharedState = Rc<OnceCell<Rc<AppState>>>;
+
+fn ready(state: &SharedState) -> Rc<AppState> {
+    state.get().expect("startup runs before any other handler").clone()
+}
 
 pub const APP_ID: &str = "dev.ridom.Luma";
 
@@ -15,8 +23,15 @@ pub fn run() -> glib::ExitCode {
         flags |= gio::ApplicationFlags::NON_UNIQUE;
     }
     let app = adw::Application::builder().application_id(APP_ID).flags(flags).build();
-    let state = AppState::open();
-    app.connect_startup(move |_| {
+    // The database and the plugins are opened in `startup`, which GIO runs only
+    // in the primary instance. A second `luma file.txt` that merely hands its
+    // files over (and exits) never touches either.
+    let state: SharedState = Rc::default();
+    let opening = state.clone();
+    app.connect_startup(move |app| {
+        opening.set(AppState::open()).ok();
+        // Only the primary instance answers other apps' "show in folder" requests.
+        own_file_manager_bus_name(app, opening.clone());
         let css = gtk::CssProvider::new();
         css.load_from_string(include_str!("../../data/style.css"));
         if let Some(d) = gtk::gdk::Display::default() {
@@ -44,9 +59,10 @@ pub fn run() -> glib::ExitCode {
     app.add_action(&quit);
     app.set_accels_for_action("app.quit", &[crate::ui::menubar::QUIT_ACCEL]);
     let menu_state = state.clone();
-    app.connect_startup(move |app| crate::ui::globalmenu::start(app.upcast_ref(), menu_state.clone()));
+    app.connect_startup(move |app| crate::ui::globalmenu::start(app.upcast_ref(), ready(&menu_state)));
     let activate_state = state.clone();
     app.connect_activate(move |app| {
+        let activate_state = ready(&activate_state);
         // First window restores the previous session; later ones start at home.
         let first = app.windows().is_empty();
         let (paths, active) =
@@ -56,6 +72,7 @@ pub fn run() -> glib::ExitCode {
     // `luma /some/folder file.txt` and desktop-entry %U launches.
     let st = state.clone();
     app.connect_open(move |app, files, _| {
+        let st = ready(&st);
         let paths: Vec<std::path::PathBuf> = files.iter().filter_map(|f| f.path()).collect();
         let existing = app.windows().into_iter().find_map(|w| w.downcast::<FmWindow>().ok());
         match existing {
@@ -67,7 +84,6 @@ pub fn run() -> glib::ExitCode {
             }
         }
     });
-    own_file_manager_bus_name(&app, state.clone());
     app.run()
 }
 
@@ -80,7 +96,7 @@ const FILE_MANAGER1: &str = r#"<node><interface name="org.freedesktop.FileManage
 /// Answer other apps' "show in folder" requests (org.freedesktop.FileManager1).
 /// The name is taken only if nobody else owns it, so another file manager is
 /// never displaced.
-fn own_file_manager_bus_name(app: &adw::Application, state: std::rc::Rc<crate::application::state::AppState>) {
+fn own_file_manager_bus_name(app: &adw::Application, state: SharedState) {
     let Ok(info) = gio::DBusNodeInfo::for_xml(FILE_MANAGER1) else { return };
     let Some(iface) = info.lookup_interface("org.freedesktop.FileManager1") else { return };
     let app = app.clone();
@@ -96,6 +112,7 @@ fn own_file_manager_bus_name(app: &adw::Application, state: std::rc::Rc<crate::a
                     let uris: Vec<String> = params.child_value(0).get().unwrap_or_default();
                     let paths: Vec<std::path::PathBuf> =
                         uris.iter().filter_map(|u| gio::File::for_uri(u).path()).collect();
+                    let state = ready(&state);
                     let window =
                         app.windows().into_iter().find_map(|w| w.downcast::<FmWindow>().ok()).unwrap_or_else(|| {
                             let (session, active) = state.db.load_session().unwrap_or_default();

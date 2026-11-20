@@ -24,6 +24,40 @@ impl LoadToken {
     }
 }
 
+/// Where a recursive walk (search, duplicates) must not go: trees that cost
+/// the network or the disk to read, and other file systems if asked.
+#[derive(Clone, Debug, Default)]
+pub struct WalkLimits {
+    /// Trees to leave out. One the walk starts inside is not left out: that
+    /// is the user asking for it.
+    pub skip: Vec<std::path::PathBuf>,
+    /// Stay on the file system the walk started on.
+    pub same_fs: bool,
+}
+
+/// [`WalkLimits`] resolved for one starting folder.
+pub struct Walker {
+    skip: Vec<std::path::PathBuf>,
+    root_dev: Option<u64>,
+}
+
+impl WalkLimits {
+    pub fn walker(&self, root: &std::path::Path) -> Walker {
+        use std::os::unix::fs::MetadataExt;
+        Walker {
+            skip: self.skip.iter().filter(|s| !root.starts_with(s)).cloned().collect(),
+            root_dev: self.same_fs.then(|| std::fs::metadata(root).ok().map(|m| m.dev())).flatten(),
+        }
+    }
+}
+
+impl Walker {
+    /// May the walk go into folder `dir` (on device `dev`)?
+    pub fn enters(&self, dir: &std::path::Path, dev: u64) -> bool {
+        self.root_dev.is_none_or(|d| d == dev) && !self.skip.iter().any(|s| dir.starts_with(s))
+    }
+}
+
 /// Incrementally enumerate `dir`, calling `on_batch` per chunk on the main
 /// context. Stops silently if `token` is superseded. Returns Err on failure
 /// to open the directory.
@@ -254,6 +288,24 @@ mod tests {
         remove_tree(&root.join("ro")).unwrap();
         assert!(!root.join("ro").exists());
         remove_tree(&root.join("ro")).unwrap(); // already gone is fine
+    }
+
+    #[test]
+    fn walk_limits_skip_trees_and_other_devices() {
+        let limits = WalkLimits { skip: vec!["/run/user/1000/gvfs".into(), "/data/cloud".into()], same_fs: true };
+        let w = limits.walker(std::path::Path::new("/"));
+        let dev = std::fs::metadata("/").map(|m| std::os::unix::fs::MetadataExt::dev(&m)).unwrap();
+        assert!(w.enters(std::path::Path::new("/home"), dev));
+        assert!(!w.enters(std::path::Path::new("/home"), dev + 1), "another file system");
+        assert!(!w.enters(std::path::Path::new("/data/cloud/drive"), dev));
+        assert!(!w.enters(std::path::Path::new("/run/user/1000/gvfs/sftp:host=x"), dev));
+        assert!(w.enters(std::path::Path::new("/data/cloud-notes"), dev), "a sibling that merely shares a prefix");
+        // Starting inside a skipped tree is a deliberate choice.
+        let inside = limits.walker(std::path::Path::new("/data/cloud/drive"));
+        assert!(inside.enters(std::path::Path::new("/data/cloud/drive/sub"), dev));
+        // Not asked to stay on one file system: any device is fine.
+        let free = WalkLimits { skip: vec![], same_fs: false }.walker(std::path::Path::new("/"));
+        assert!(free.enters(std::path::Path::new("/mnt"), dev + 7));
     }
 
     #[test]

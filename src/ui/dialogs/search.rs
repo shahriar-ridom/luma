@@ -247,6 +247,11 @@ pub fn show(parent: &gtk::Window, root: PathBuf, app: Rc<AppState>, on_open: Rc<
                 recursive: recursive.is_active(),
                 hidden: hidden.is_active(),
                 no_content: vec![crate::integrations::cloud::base_dir()],
+                // Remote trees are left out; a search is not limited to one file system.
+                limits: crate::core::filesystem::WalkLimits {
+                    skip: crate::integrations::network::remote_trees(),
+                    same_fs: false,
+                },
             };
             let (cancel, rx) = search::spawn(q);
             *st.cancel.borrow_mut() = Some(cancel);

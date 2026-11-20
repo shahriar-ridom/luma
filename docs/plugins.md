@@ -12,6 +12,8 @@ Add commands that appear under **More → Actions** in the context menu for matc
 
 Placeholders: `%f` first path · `%F` all paths (as separate arguments) · `%d` current folder · `%n` file name · `%b` name without extension · `%u` URI · `%%` a percent sign.
 
+**Names that start with `-`.** A file called `-rf` would be read as an option if it were passed on its own. When `%n` or `%b` is the *start* of an argument and the name begins with `-`, it is written `./-rf` instead. `%f`, `%F`, `%d` and `%u` are full paths and never start with `-`. For programs that take other file names from the command line, add `--` before them (`["rm", "--", "%n"]`) to end option parsing.
+
 ## Plugins
 
 A plugin is a folder containing `plugin.toml`, placed in `~/.local/share/luma/plugins/` (or `/usr/share/luma/plugins/`).

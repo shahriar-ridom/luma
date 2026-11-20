@@ -61,6 +61,10 @@ pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>, op
     }
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title("Properties");
+    // The content arrives after the dialog opens, so a content-sized dialog
+    // would stay as small as its "Loading…" row.
+    dialog.set_content_width(560);
+    dialog.set_content_height(640);
     let cancel = Arc::new(AtomicBool::new(false));
     let c = cancel.clone();
     dialog.connect_closed(move |_| c.store(true, Ordering::Relaxed));
@@ -73,7 +77,31 @@ pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>, op
     dialog.add(&page);
 
     if targets.len() == 1 {
-        single(&dialog, &page, &group, &targets[0], &cancel, &state, &ops);
+        // `lstat` and `readlink` can hang on a stale network mount, so they run
+        // off the main thread; the dialog opens at once and fills in.
+        let loading = row("Loading…", "");
+        group.add(&loading);
+        let (dialog, page, group, cancel, state, ops) =
+            (dialog.clone(), page.clone(), group.clone(), cancel.clone(), state.clone(), ops.clone());
+        let path = targets[0].clone();
+        glib::spawn_future_local(async move {
+            let p = path.clone();
+            let probe = gtk::gio::spawn_blocking(move || {
+                let md = std::fs::symlink_metadata(&p);
+                let link =
+                    md.as_ref().ok().filter(|m| m.file_type().is_symlink()).and_then(|_| std::fs::read_link(&p).ok());
+                (md, link)
+            })
+            .await;
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            group.remove(&loading);
+            match probe {
+                Ok((Ok(md), link)) => single(&dialog, &page, &group, &Target { path, md, link }, &cancel, &state, &ops),
+                _ => group.add(&row("Error", "This item can no longer be read.")),
+            }
+        });
     } else {
         multiple(&group, &targets, &cancel);
     }
@@ -104,26 +132,33 @@ fn spawn_size(path: PathBuf, cancel: Arc<AtomicBool>, target: adw::ActionRow, wi
     });
 }
 
+/// What was read about the one selected item, off the main thread.
+struct Target {
+    path: PathBuf,
+    md: std::fs::Metadata,
+    link: Option<PathBuf>,
+}
+
 fn single(
     dialog: &adw::PreferencesDialog,
     page: &adw::PreferencesPage,
     group: &adw::PreferencesGroup,
-    path: &Path,
+    target: &Target,
     cancel: &Arc<AtomicBool>,
     state: &Rc<AppState>,
     ops: &OpsUi,
 ) {
-    let Ok(md) = std::fs::symlink_metadata(path) else {
-        group.add(&row("Error", "This item can no longer be read."));
-        return;
-    };
+    let Target { path, md, link: link_target } = target;
+    let (path, md): (&Path, &std::fs::Metadata) = (path, md);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
     group.add(&row("Name", &name));
-    group.add(&row("Kind", &kind_of(path, &md)));
+    group.add(&row("Kind", &kind_of(path, md)));
     group.add(&row("Location", &path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())));
     if md.file_type().is_symlink() {
-        let t = std::fs::read_link(path).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
-        group.add(&row("Points to", &t));
+        group.add(&row(
+            "Points to",
+            &link_target.as_ref().map(|t| t.to_string_lossy().into_owned()).unwrap_or_default(),
+        ));
     }
     let size = row("Size", "");
     group.add(&size);
@@ -149,7 +184,7 @@ fn single(
         checksum_group(page, path, cancel);
     }
     if !md.file_type().is_symlink() {
-        permissions_page(dialog, path, &md, cancel, ops);
+        permissions_page(dialog, path, md, cancel, ops);
     }
 }
 

@@ -9,6 +9,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use crate::core::filesystem::WalkLimits;
 use crate::core::metadata::{Algo, checksum, checksum_prefix};
 
 #[derive(Clone, Debug)]
@@ -27,7 +28,15 @@ pub enum DupEvent {
     },
 }
 
-pub fn run(root: &Path, hidden: bool, min_size: u64, cancel: &AtomicBool, mut emit: impl FnMut(DupEvent)) {
+pub fn run(
+    root: &Path,
+    hidden: bool,
+    min_size: u64,
+    limits: &WalkLimits,
+    cancel: &AtomicBool,
+    mut emit: impl FnMut(DupEvent),
+) {
+    let walker = limits.walker(root);
     // 1. Group by size.
     let mut by_size: HashMap<u64, Vec<(PathBuf, (u64, u64))>> = HashMap::new();
     let mut stack = vec![root.to_path_buf()];
@@ -43,7 +52,9 @@ pub fn run(root: &Path, hidden: bool, min_size: u64, cancel: &AtomicBool, mut em
             }
             let Ok(md) = e.metadata() else { continue };
             if md.is_dir() {
-                stack.push(e.path());
+                if walker.enters(&e.path(), md.dev()) {
+                    stack.push(e.path());
+                }
             } else if md.is_file() && md.len() >= min_size.max(1) {
                 scanned += 1;
                 by_size.entry(md.len()).or_default().push((e.path(), (md.dev(), md.ino())));
@@ -104,6 +115,7 @@ pub fn spawn(
     root: PathBuf,
     hidden: bool,
     min_size: u64,
+    limits: WalkLimits,
 ) -> (std::sync::Arc<AtomicBool>, async_channel::Receiver<DupEvent>) {
     let (tx, rx) = async_channel::unbounded();
     let cancel = std::sync::Arc::new(AtomicBool::new(false));
@@ -111,7 +123,7 @@ pub fn spawn(
     std::thread::Builder::new()
         .name("fm-duplicates".into())
         .spawn(move || {
-            run(&root, hidden, min_size, &c, |ev| {
+            run(&root, hidden, min_size, &limits, &c, |ev| {
                 let _ = tx.send_blocking(ev);
             })
         })
@@ -144,7 +156,7 @@ mod tests {
 
         let mut groups = Vec::new();
         let mut wasted = 0;
-        run(&d, false, 1, &AtomicBool::new(false), |ev| match ev {
+        run(&d, false, 1, &WalkLimits::default(), &AtomicBool::new(false), |ev| match ev {
             DupEvent::Group(g) => groups.push(g),
             DupEvent::Done { wasted: w, .. } => wasted = w,
             _ => {}
@@ -155,5 +167,26 @@ mod tests {
         assert_eq!(names.len(), 2, "hard link must not count as a third copy: {names:?}");
         assert!(names.contains(&"a-copy.txt".to_string()));
         assert_eq!(wasted, 12);
+    }
+
+    #[test]
+    fn skipped_trees_are_not_scanned() {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/dups-skip");
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("cloud/drive")).unwrap();
+        fs::write(d.join("a"), "same").unwrap();
+        fs::write(d.join("cloud/drive/b"), "same").unwrap();
+        let groups = |limits: &WalkLimits, root: &Path| {
+            let mut n = 0;
+            run(root, false, 1, limits, &AtomicBool::new(false), |ev| {
+                if let DupEvent::Group(_) = ev {
+                    n += 1;
+                }
+            });
+            n
+        };
+        assert_eq!(groups(&WalkLimits::default(), &d), 1);
+        let skip = WalkLimits { skip: vec![d.join("cloud")], same_fs: true };
+        assert_eq!(groups(&skip, &d), 0, "the cloud copy is never read");
     }
 }

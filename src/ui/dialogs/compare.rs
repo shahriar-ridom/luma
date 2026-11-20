@@ -42,11 +42,18 @@ pub fn show(parent: &gtk::Window, a: PathBuf, b: PathBuf) {
         t.set_xalign(0.0);
         t.set_hexpand(true);
         t.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        let f = gtk::Label::new(Some(&facts(p)));
+        // `stat` can hang on a stale network mount: ask off the main thread.
+        let f = gtk::Label::new(Some("…"));
         f.add_css_class("dim-label");
         f.set_xalign(0.0);
         header.attach(&t, col as i32, 0, 1, 1);
         header.attach(&f, col as i32, 1, 1, 1);
+        let p = p.clone();
+        glib::spawn_future_local(async move {
+            if let Ok(text) = gtk::gio::spawn_blocking(move || facts(&p)).await {
+                f.set_text(&text);
+            }
+        });
     }
     let verdict = gtk::Label::new(Some("Comparing…"));
     verdict.set_xalign(0.0);

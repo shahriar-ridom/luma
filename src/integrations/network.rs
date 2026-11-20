@@ -93,6 +93,14 @@ pub fn scheme_host(uri: &str) -> Option<(String, String)> {
     Some((scheme.to_lowercase(), host.to_lowercase()))
 }
 
+/// Trees whose contents live somewhere else: walking or thumbnailing them
+/// would download everything. GVfs mounts and cloud drives.
+pub fn remote_trees() -> Vec<PathBuf> {
+    let mut v = vec![gtk::glib::user_runtime_dir().join("gvfs"), gtk::glib::home_dir().join(".gvfs")];
+    v.push(crate::integrations::cloud::base_dir());
+    v
+}
+
 /// Local path of an already-mounted location, if any.
 pub async fn mounted_path(uri: &str) -> Option<PathBuf> {
     let f = gio::File::for_uri(uri);

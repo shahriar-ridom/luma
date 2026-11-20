@@ -64,6 +64,11 @@ pub fn mount_args(name: &str, dir: &Path) -> Vec<String> {
         dir.to_string_lossy().into_owned(),
         "--vfs-cache-mode".into(),
         "full".into(),
+        // Without limits the cache grows until the disk is full.
+        "--vfs-cache-max-size".into(),
+        "10G".into(),
+        "--vfs-cache-max-age".into(),
+        "24h".into(),
         "--dir-cache-time".into(),
         "5m".into(),
         "--daemon".into(),
@@ -205,6 +210,9 @@ mod tests {
         let m = mount_args("g", Path::new("/data/cloud/g"));
         assert_eq!(&m[..3], ["mount", "g:", "/data/cloud/g"]);
         assert!(m.contains(&"--daemon".to_string()));
+        let value_of = |flag: &str| m.iter().position(|a| a == flag).map(|i| m[i + 1].as_str());
+        assert_eq!(value_of("--vfs-cache-max-size"), Some("10G"));
+        assert_eq!(value_of("--vfs-cache-max-age"), Some("24h"));
     }
 
     #[test]

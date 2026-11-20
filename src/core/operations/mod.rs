@@ -324,6 +324,16 @@ impl Ctx {
     }
 }
 
+/// Are these two paths the very same file or folder, reached by different
+/// routes (a symlinked or bind-mounted parent)? Comparing URIs misses that.
+fn same_inode(a: &gio::File, b: &gio::File) -> bool {
+    let id = |f: &gio::File| {
+        let i = f.query_info("unix::device,unix::inode", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE).ok()?;
+        Some((i.attribute_uint32("unix::device"), i.attribute_uint64("unix::inode")))
+    };
+    matches!((id(a), id(b)), (Some(x), Some(y)) if x.1 != 0 && x == y)
+}
+
 fn file_type(f: &gio::File) -> gio::FileType {
     f.query_file_type(NOFOLLOW, gio::Cancellable::NONE)
 }
@@ -448,7 +458,7 @@ fn transfer(ctx: &mut Ctx, src: &gio::File, dest_dir: &gio::File, mv: bool) -> b
     let name = name.to_string_lossy().into_owned();
     let mut dst = dest_dir.child(&name);
 
-    if src.equal(&dst) {
+    if src.equal(&dst) || (mv && same_inode(src, &dst)) {
         if mv {
             ctx.p.items_done += 1;
             return true; // moving onto itself is a no-op
@@ -882,6 +892,20 @@ mod tests {
         assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "new");
         assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
         assert!(!a.join("dir").exists());
+    }
+
+    #[test]
+    fn moving_a_folder_onto_itself_through_a_symlink_is_a_no_op() {
+        let (a, b) = setup("move-self");
+        // `b/link` leads back to `a`, so `b/link/dir` is `a/dir` itself.
+        std::os::unix::fs::symlink(&a, b.join("link")).unwrap();
+        let req =
+            OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b.join("link"))) };
+        let (s, n) = run_op(req, Resolution::Skip);
+        assert_eq!(n, 0, "no file may be asked about against itself");
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_eq!(fs::read_to_string(a.join("dir/f.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(a.join("dir/sub/g.txt")).unwrap(), "deep");
     }
 
     #[test]

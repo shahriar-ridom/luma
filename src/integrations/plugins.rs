@@ -112,6 +112,16 @@ impl Matcher {
 
 // ---- command expansion ----------------------------------------------------------
 
+/// Add a file name to the argument being built. A name that would begin the
+/// argument and starts with `-` (a file called `-rf`) is written `./-rf`, so
+/// the program cannot take it for an option.
+fn push_name(arg: &mut String, name: &str) {
+    if arg.is_empty() && name.starts_with('-') {
+        arg.push_str("./");
+    }
+    arg.push_str(name);
+}
+
 pub fn expand(template: &[String], paths: &[PathBuf], dir: &Path) -> Vec<String> {
     let first = paths.first();
     let name = first.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -133,8 +143,8 @@ pub fn expand(template: &[String], paths: &[PathBuf], dir: &Path) -> Vec<String>
             match it.next() {
                 Some('f') => s.push_str(&first.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()),
                 Some('d') => s.push_str(&dir.to_string_lossy()),
-                Some('n') => s.push_str(&name),
-                Some('b') => s.push_str(&base),
+                Some('n') => push_name(&mut s, &name),
+                Some('b') => push_name(&mut s, &base),
                 Some('u') => s.push_str(&first.map(|p| uri(p)).unwrap_or_default()),
                 Some('%') => s.push('%'),
                 Some(o) => {
@@ -542,6 +552,19 @@ mod tests {
         assert_eq!(parse_command(r#"code --goto "%f" 'x y'"#).unwrap(), ["code", "--goto", "%f", "x y"]);
         assert!(parse_command("echo 'oops").is_err());
         assert!(parse_command("  ").is_err());
+    }
+
+    #[test]
+    fn names_that_look_like_options_get_a_dot_slash() {
+        let dash = vec![PathBuf::from("/d/-rf"), PathBuf::from("/d/--version.tar")];
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(expand(&t(&["rm", "%n"]), &dash, Path::new("/d")), ["rm", "./-rf"]);
+        assert_eq!(expand(&t(&["tool", "%b"]), &dash[1..], Path::new("/d")), ["tool", "./--version"]);
+        // Only when the name would start the argument: `--name=-rf` is a value, not an option.
+        assert_eq!(expand(&t(&["tool", "--name=%n", "x%n"]), &dash, Path::new("/d")), ["tool", "--name=-rf", "x-rf"]);
+        // Ordinary names, and the full-path placeholders, are left alone.
+        let ok = vec![PathBuf::from("/d/a.txt")];
+        assert_eq!(expand(&t(&["tool", "%n", "%f"]), &ok, Path::new("/d")), ["tool", "a.txt", "/d/a.txt"]);
     }
 
     #[test]

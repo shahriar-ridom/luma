@@ -1,6 +1,7 @@
 //! Tag editor for the selection, and a browser for all files with a tag.
 
 use adw::prelude::*;
+use gtk::glib;
 use std::{cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Rc};
 
 use crate::application::state::AppState;
@@ -158,22 +159,34 @@ pub fn browse(parent: &gtk::Window, tag: &str, state: Rc<AppState>, on_open: Rc<
         .content_height(480)
         .child(&tv)
         .build();
-    for f in files {
+    // Whether each item still exists is asked off the main thread (a stale
+    // network mount would freeze the window); the rows fill in as it answers.
+    let mut rows = Vec::new();
+    for f in &files {
         let row = adw::ActionRow::new();
         row.set_use_markup(false);
         row.set_title(&f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
         row.set_subtitle(&f.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
-        row.set_activatable(f.exists());
-        if !f.exists() {
-            row.add_css_class("dim-label");
-            row.set_tooltip_text(Some("This item no longer exists"));
-        }
-        let (cb, dd) = (on_open.clone(), dialog.clone());
+        let (cb, dd, f) = (on_open.clone(), dialog.clone(), f.clone());
         row.connect_activated(move |_| {
             dd.close();
             cb(f.clone());
         });
         list.append(&row);
+        rows.push(row);
     }
+    glib::spawn_future_local(async move {
+        let Ok(exists) = gtk::gio::spawn_blocking(move || files.iter().map(|f| f.exists()).collect::<Vec<_>>()).await
+        else {
+            return;
+        };
+        for (row, here) in rows.into_iter().zip(exists) {
+            row.set_activatable(here);
+            if !here {
+                row.add_css_class("dim-label");
+                row.set_tooltip_text(Some("This item no longer exists"));
+            }
+        }
+    });
     dialog.present(Some(parent));
 }
