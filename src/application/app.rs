@@ -29,6 +29,20 @@ pub fn run() -> glib::ExitCode {
         }
         gtk::Window::set_default_icon_name(APP_ID);
     });
+    // Quit closes every window through its own close request, so a window with
+    // operations still running asks before it goes.
+    let quit = gio::SimpleAction::new("quit", None);
+    quit.connect_activate(glib::clone!(
+        #[weak]
+        app,
+        move |_, _| {
+            for w in app.windows() {
+                w.close();
+            }
+        }
+    ));
+    app.add_action(&quit);
+    app.set_accels_for_action("app.quit", &[crate::ui::menubar::QUIT_ACCEL]);
     let menu_state = state.clone();
     app.connect_startup(move |app| crate::ui::globalmenu::start(app.upcast_ref(), menu_state.clone()));
     let activate_state = state.clone();

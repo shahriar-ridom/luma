@@ -128,8 +128,14 @@ fn base_git(root: &Path) -> Command {
 /// Filter commands that are safe to keep when a repository's own config
 /// defines them: what `git lfs install --local` writes. They run the
 /// user-installed `git-lfs`, not a program named by the repository.
-const TRUSTED_FILTERS: &[(&str, &str)] =
-    &[("clean", "git-lfs clean -- %f"), ("smudge", "git-lfs smudge -- %f"), ("process", "git-lfs filter-process")];
+const TRUSTED_FILTERS: &[(&str, &str)] = &[
+    ("clean", "git-lfs clean -- %f"),
+    ("smudge", "git-lfs smudge -- %f"),
+    ("process", "git-lfs filter-process"),
+    // `git lfs install --skip-smudge`
+    ("smudge", "git-lfs smudge --skip -- %f"),
+    ("process", "git-lfs filter-process --skip"),
+];
 
 /// Names of the filter drivers (`filter.<name>.clean|smudge|process`) that the
 /// repository itself defines (`local`, `worktree` or `command` scope, includes
@@ -531,6 +537,7 @@ u UU N... 1 2 3 4 a b c conflict.txt\0\
     fn git_lfs_filters_written_by_lfs_install_are_kept() {
         let r = repo("git_lfs_kept");
         for (k, v) in [
+            ("filter.skip.smudge", "git-lfs smudge --skip -- %f"),
             ("filter.lfs.clean", "git-lfs clean -- %f"),
             ("filter.lfs.smudge", "git-lfs smudge -- %f"),
             ("filter.lfs.process", "git-lfs filter-process"),

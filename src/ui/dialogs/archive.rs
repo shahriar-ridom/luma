@@ -37,54 +37,66 @@ pub struct CompressChoice {
 
 pub async fn compress(parent: &gtk::Window, default_stem: &str, count: usize) -> Option<CompressChoice> {
     let body = if count == 1 { "Compress 1 item".to_string() } else { format!("Compress {count} items") };
-    let d = adw::AlertDialog::new(Some("Create Archive"), Some(&body));
-    d.add_responses(&[("cancel", "Cancel"), ("ok", "Create")]);
-    d.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
-    d.set_default_response(Some("ok"));
-    d.set_close_response("cancel");
+    // What was typed and chosen survives a rejected name.
+    let (mut text, mut format_ix, mut level_ix) = (default_stem.to_string(), 0u32, 1u32);
+    let mut problem: Option<String> = None;
+    loop {
+        let d = adw::AlertDialog::new(Some("Create Archive"), Some(problem.as_deref().unwrap_or(&body)));
+        d.add_responses(&[("cancel", "Cancel"), ("ok", "Create")]);
+        d.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+        d.set_default_response(Some("ok"));
+        d.set_close_response("cancel");
 
-    let name = gtk::Entry::new();
-    name.set_text(default_stem);
-    name.set_activates_default(true);
-    let fmts: Vec<&str> = Format::ALL.iter().map(|f| f.label()).collect();
-    let fmt = gtk::DropDown::from_strings(&fmts);
-    let lvls: Vec<&str> = Level::ALL.iter().map(|l| l.label()).collect();
-    let lvl = gtk::DropDown::from_strings(&lvls);
-    lvl.set_selected(1);
-    let l = lvl.clone();
-    fmt.connect_selected_notify(move |f| l.set_sensitive(Format::ALL[f.selected() as usize].has_levels()));
+        let name = gtk::Entry::new();
+        name.set_text(&text);
+        name.set_activates_default(true);
+        if problem.is_some() {
+            name.add_css_class("error");
+        }
+        let fmts: Vec<&str> = Format::ALL.iter().map(|f| f.label()).collect();
+        let fmt = gtk::DropDown::from_strings(&fmts);
+        fmt.set_selected(format_ix);
+        let lvls: Vec<&str> = Level::ALL.iter().map(|l| l.label()).collect();
+        let lvl = gtk::DropDown::from_strings(&lvls);
+        lvl.set_selected(level_ix);
+        lvl.set_sensitive(Format::ALL[format_ix as usize].has_levels());
+        let l = lvl.clone();
+        fmt.connect_selected_notify(move |f| l.set_sensitive(Format::ALL[f.selected() as usize].has_levels()));
 
-    let grid = gtk::Grid::new();
-    grid.set_row_spacing(8);
-    grid.set_column_spacing(12);
-    for (i, (label, w)) in
-        [("Name", name.upcast_ref::<gtk::Widget>()), ("Format", fmt.upcast_ref()), ("Compression", lvl.upcast_ref())]
-            .into_iter()
-            .enumerate()
-    {
-        let l = gtk::Label::new(Some(label));
-        l.set_xalign(0.0);
-        grid.attach(&l, 0, i as i32, 1, 1);
-        w.set_hexpand(true);
-        grid.attach(w, 1, i as i32, 1, 1);
+        let grid = gtk::Grid::new();
+        grid.set_row_spacing(8);
+        grid.set_column_spacing(12);
+        for (i, (label, w)) in [
+            ("Name", name.upcast_ref::<gtk::Widget>()),
+            ("Format", fmt.upcast_ref()),
+            ("Compression", lvl.upcast_ref()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let l = gtk::Label::new(Some(label));
+            l.set_xalign(0.0);
+            grid.attach(&l, 0, i as i32, 1, 1);
+            w.set_hexpand(true);
+            grid.attach(w, 1, i as i32, 1, 1);
+        }
+        d.set_extra_child(Some(&grid));
+        let n = name.clone();
+        glib::idle_add_local_once(move || {
+            n.grab_focus();
+        });
+        if d.choose_future(Some(parent)).await != "ok" {
+            return None;
+        }
+        text = name.text().trim().to_string();
+        (format_ix, level_ix) = (fmt.selected(), lvl.selected());
+        let format = Format::ALL[format_ix as usize];
+        // Judge the file name that will really be made, including its extension.
+        match super::name_problem(&text).or_else(|| super::invalid_name_reason(&format!("{text}.{}", format.ext()))) {
+            None => return Some(CompressChoice { name: text, format, level: Level::ALL[level_ix as usize] }),
+            Some(why) => problem = Some(why.to_string()),
+        }
     }
-    d.set_extra_child(Some(&grid));
-    let n = name.clone();
-    glib::idle_add_local_once(move || {
-        n.grab_focus();
-    });
-    if d.choose_future(Some(parent)).await != "ok" {
-        return None;
-    }
-    let nm = name.text().trim().to_string();
-    if nm.is_empty() || nm.contains('/') {
-        return None;
-    }
-    Some(CompressChoice {
-        name: nm,
-        format: Format::ALL[fmt.selected() as usize],
-        level: Level::ALL[lvl.selected() as usize],
-    })
 }
 
 /// Read-only listing of the archive. `on_extract(true)` = here, `false` = choose a folder.

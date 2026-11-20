@@ -12,6 +12,9 @@ use gtk::{gio, prelude::*};
 
 use crate::application::state::AppState;
 
+/// Quit (all windows).
+pub const QUIT_ACCEL: &str = "<Control>q";
+
 fn item(label: &str, id: &str, state: &AppState) -> gio::MenuItem {
     let it = gio::MenuItem::new(Some(label), Some(&format!("win.{id}")));
     let accel = state.prefs.accel(id);
@@ -70,6 +73,11 @@ pub fn build(state: &AppState) -> gio::Menu {
         ),
     );
     file.append_section(None, &section(state, &[("Move to Trash", "trash"), ("Delete Permanently…", "delete")]));
+    let leave = section(state, &[("Close Window", "close")]);
+    let quit = gio::MenuItem::new(Some("Quit"), Some("app.quit"));
+    quit.set_attribute_value("accel", Some(&QUIT_ACCEL.to_variant()));
+    leave.append_item(&quit);
+    file.append_section(None, &leave);
     bar.append_submenu(Some("_File"), &file);
 
     let edit = gio::Menu::new();

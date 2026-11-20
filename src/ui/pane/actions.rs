@@ -283,7 +283,7 @@ impl Pane {
         if t.is_empty() {
             t.extend(self.cur_dir());
         }
-        crate::ui::dialogs::properties::show(&win, t, self.env.state.clone());
+        crate::ui::dialogs::properties::show(&win, t, self.env.state.clone(), self.env.ops.clone());
     }
 
     pub fn copy_path(&self) {

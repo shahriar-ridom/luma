@@ -28,6 +28,18 @@ pub type CancelFn = Rc<dyn Fn()>;
 pub type PauseFn = Rc<dyn Fn(bool)>;
 pub type RetryFn = Rc<dyn Fn()>;
 
+/// The one button a failed operation offers ("Retry", "Delete Permanently…").
+pub struct Action {
+    pub label: String,
+    pub run: RetryFn,
+}
+
+impl Action {
+    pub fn retry(run: RetryFn) -> Self {
+        Self { label: "Retry".into(), run }
+    }
+}
+
 const RING: i32 = 20;
 /// Width of the opened card's content.
 const CARD_WIDTH: i32 = 340;
@@ -45,7 +57,7 @@ pub enum Outcome {
     Failed {
         title: String,
         detail: String,
-        retry: Option<RetryFn>,
+        action: Option<Action>,
     },
     /// Ended without a headline of its own (the caller posts a message).
     Quiet,
@@ -749,8 +761,8 @@ impl Island {
         let Some(op) = self.find(id) else { return };
         let last = !self.ops.borrow().iter().any(|o| o.id != id && !o.failed.get());
         match outcome {
-            Outcome::Failed { title, detail, retry } => {
-                self.fail_row(&op, &title, &detail, retry);
+            Outcome::Failed { title, detail, action } => {
+                self.fail_row(&op, &title, &detail, action);
                 self.refresh();
                 // Failures need attention: open the card to show what happened.
                 self.set_expanded(true);
@@ -782,7 +794,7 @@ impl Island {
         }
     }
 
-    fn fail_row(&self, op: &Rc<OpView>, title: &str, detail: &str, retry: Option<RetryFn>) {
+    fn fail_row(&self, op: &Rc<OpView>, title: &str, detail: &str, action: Option<Action>) {
         op.failed.set(true);
         op.row.add_css_class("failed");
         op.name.set_text(title);
@@ -797,8 +809,8 @@ impl Island {
             op.controls.remove(&c);
         }
         let id = op.id;
-        if let Some(retry) = retry {
-            let b = gtk::Button::with_label("Retry");
+        if let Some(Action { label, run }) = action {
+            let b = gtk::Button::with_label(&label);
             b.add_css_class("fm-island-action");
             b.set_valign(gtk::Align::Center);
             let w = self.me.clone();
@@ -807,7 +819,7 @@ impl Island {
                     i.remove_row(id);
                     i.refresh();
                 }
-                retry();
+                run();
             });
             op.controls.append(&b);
         }
