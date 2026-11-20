@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-11-20
+
+- TODO: describe this release.
+
 ## [Unreleased]
 
 - New app icon: frosted-glass folder with papers and the L mark.
