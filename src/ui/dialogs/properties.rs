@@ -18,6 +18,8 @@ use crate::application::state::AppState;
 use crate::core::filesystem::human_size;
 use crate::core::metadata::{self, Algo, DirStats};
 use crate::core::permissions::{self, SETGID, SETUID, STICKY, Scope};
+use crate::ui::dialogs;
+use crate::ui::operations::OpsUi;
 
 fn row(title: &str, value: &str) -> adw::ActionRow {
     let r = adw::ActionRow::new();
@@ -53,12 +55,16 @@ fn size_text(bytes: u64) -> String {
     format!("{} ({} bytes)", human_size(bytes as i64), bytes)
 }
 
-pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>) {
+pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>, ops: OpsUi) {
     if targets.is_empty() {
         return;
     }
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title("Properties");
+    // The content arrives after the dialog opens, so a content-sized dialog
+    // would stay as small as its "Loading…" row.
+    dialog.set_content_width(560);
+    dialog.set_content_height(640);
     let cancel = Arc::new(AtomicBool::new(false));
     let c = cancel.clone();
     dialog.connect_closed(move |_| c.store(true, Ordering::Relaxed));
@@ -71,7 +77,31 @@ pub fn show(parent: &gtk::Window, targets: Vec<PathBuf>, state: Rc<AppState>) {
     dialog.add(&page);
 
     if targets.len() == 1 {
-        single(&dialog, &page, &group, &targets[0], &cancel, &state);
+        // `lstat` and `readlink` can hang on a stale network mount, so they run
+        // off the main thread; the dialog opens at once and fills in.
+        let loading = row("Loading…", "");
+        group.add(&loading);
+        let (dialog, page, group, cancel, state, ops) =
+            (dialog.clone(), page.clone(), group.clone(), cancel.clone(), state.clone(), ops.clone());
+        let path = targets[0].clone();
+        glib::spawn_future_local(async move {
+            let p = path.clone();
+            let probe = gtk::gio::spawn_blocking(move || {
+                let md = std::fs::symlink_metadata(&p);
+                let link =
+                    md.as_ref().ok().filter(|m| m.file_type().is_symlink()).and_then(|_| std::fs::read_link(&p).ok());
+                (md, link)
+            })
+            .await;
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            group.remove(&loading);
+            match probe {
+                Ok((Ok(md), link)) => single(&dialog, &page, &group, &Target { path, md, link }, &cancel, &state, &ops),
+                _ => group.add(&row("Error", "This item can no longer be read.")),
+            }
+        });
     } else {
         multiple(&group, &targets, &cancel);
     }
@@ -102,25 +132,33 @@ fn spawn_size(path: PathBuf, cancel: Arc<AtomicBool>, target: adw::ActionRow, wi
     });
 }
 
+/// What was read about the one selected item, off the main thread.
+struct Target {
+    path: PathBuf,
+    md: std::fs::Metadata,
+    link: Option<PathBuf>,
+}
+
 fn single(
     dialog: &adw::PreferencesDialog,
     page: &adw::PreferencesPage,
     group: &adw::PreferencesGroup,
-    path: &Path,
+    target: &Target,
     cancel: &Arc<AtomicBool>,
     state: &Rc<AppState>,
+    ops: &OpsUi,
 ) {
-    let Ok(md) = std::fs::symlink_metadata(path) else {
-        group.add(&row("Error", "This item can no longer be read."));
-        return;
-    };
+    let Target { path, md, link: link_target } = target;
+    let (path, md): (&Path, &std::fs::Metadata) = (path, md);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
     group.add(&row("Name", &name));
-    group.add(&row("Kind", &kind_of(path, &md)));
+    group.add(&row("Kind", &kind_of(path, md)));
     group.add(&row("Location", &path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())));
     if md.file_type().is_symlink() {
-        let t = std::fs::read_link(path).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
-        group.add(&row("Points to", &t));
+        group.add(&row(
+            "Points to",
+            &link_target.as_ref().map(|t| t.to_string_lossy().into_owned()).unwrap_or_default(),
+        ));
     }
     let size = row("Size", "");
     group.add(&size);
@@ -146,7 +184,7 @@ fn single(
         checksum_group(page, path, cancel);
     }
     if !md.file_type().is_symlink() {
-        permissions_page(dialog, path, &md, cancel);
+        permissions_page(dialog, path, md, cancel, ops);
     }
 }
 
@@ -259,7 +297,13 @@ fn checksum_group(page: &adw::PreferencesPage, path: &Path, cancel: &Arc<AtomicB
     });
 }
 
-fn permissions_page(dialog: &adw::PreferencesDialog, path: &Path, md: &std::fs::Metadata, cancel: &Arc<AtomicBool>) {
+fn permissions_page(
+    dialog: &adw::PreferencesDialog,
+    path: &Path,
+    md: &std::fs::Metadata,
+    cancel: &Arc<AtomicBool>,
+    ops: &OpsUi,
+) {
     let page = adw::PreferencesPage::new();
     page.set_title("Permissions");
     page.set_icon_name(Some("luma-lock-symbolic"));
@@ -391,7 +435,7 @@ fn permissions_page(dialog: &adw::PreferencesDialog, path: &Path, md: &std::fs::
     });
     dialog.add(&page);
 
-    let (path, cancel, dialog) = (path.to_path_buf(), cancel.clone(), dialog.clone());
+    let (path, cancel, dialog, ops) = (path.to_path_buf(), cancel.clone(), dialog.clone(), ops.clone());
     let gid0 = md.gid();
     apply.connect_clicked(move |btn| {
         let mode = compute();
@@ -403,32 +447,99 @@ fn permissions_page(dialog: &adw::PreferencesDialog, path: &Path, md: &std::fs::
         };
         let gid = groups.get(group_combo.selected() as usize).map(|(g, _)| *g).unwrap_or(gid0);
         btn.set_sensitive(false);
-        let (p, c, dialog, btn) = (path.clone(), cancel.clone(), dialog.clone(), btn.clone());
+        let (p, c, dialog, btn, ops) = (path.clone(), cancel.clone(), dialog.clone(), btn.clone(), ops.clone());
         glib::spawn_future_local(async move {
-            let r = gtk::gio::spawn_blocking(move || {
-                let mut errors: Vec<String> = Vec::new();
-                let mut changed = 0;
-                if gid != gid0 {
-                    match permissions::set_group(&p, gid) {
-                        Ok(()) => changed += 1,
-                        Err(e) => errors.push(format!("group: {e}")),
-                    }
+            // A recursive change touches many files and cannot be undone: say how many first.
+            if scope != Scope::ItemOnly {
+                let (counted, c2) = (p.clone(), c.clone());
+                let n = gtk::gio::spawn_blocking(move || permissions::count(&counted, scope, &c2)).await;
+                let Ok(n) = n else { return btn.set_sensitive(true) };
+                if c.load(Ordering::Relaxed) {
+                    return; // the dialog was closed while counting
                 }
-                if mode != mode0 || scope != Scope::ItemOnly {
-                    let rep = permissions::apply(&p, mode, scope, &c);
-                    changed += rep.changed;
-                    errors.extend(rep.errors.into_iter().take(3).map(|(p, e)| format!("{}: {e}", p.display())));
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into());
+                let (heading, body) = recursive_prompt(scope, n, &name);
+                if !dialogs::confirm(&dialog, &heading, &body, "Change Permissions", true).await {
+                    return btn.set_sensitive(true);
                 }
-                (changed, errors)
-            })
-            .await;
+            }
             btn.set_sensitive(true);
-            let msg = match r {
-                Ok((n, e)) if e.is_empty() => format!("Updated {n} item(s)"),
-                Ok((n, e)) => format!("Updated {n}; {}", e.join("; ")),
-                Err(_) => "Update failed".into(),
-            };
-            dialog.add_toast(adw::Toast::new(&msg));
+            // A background job with its own entry in the activity island: it
+            // keeps running, can be cancelled there, and reports when it is
+            // done even if this dialog is closed.
+            let done_ops = ops.clone();
+            ops.run_job(
+                "Changing permissions",
+                move |job_cancel| {
+                    let mut errors: Vec<String> = Vec::new();
+                    let mut changed = 0;
+                    if gid != gid0 {
+                        match permissions::set_group(&p, gid) {
+                            Ok(()) => changed += 1,
+                            Err(e) => errors.push(format!("group: {e}")),
+                        }
+                    }
+                    if mode != mode0 || scope != Scope::ItemOnly {
+                        let rep = permissions::apply(&p, mode, scope, &job_cancel);
+                        changed += rep.changed;
+                        errors.extend(rep.errors.into_iter().take(3).map(|(p, e)| format!("{}: {e}", p.display())));
+                    }
+                    Ok::<_, String>((changed, errors, job_cancel.load(Ordering::Relaxed)))
+                },
+                move |r| {
+                    let msg = match r {
+                        Ok((n, _, true)) => format!("Cancelled after changing {}", plural_items(n)),
+                        Ok((n, e, false)) if e.is_empty() => format!("Updated {}", plural_items(n)),
+                        Ok((n, e, false)) => format!("Updated {}; {}", plural_items(n), e.join("; ")),
+                        Err(e) => format!("Could not change permissions: {e}"),
+                    };
+                    done_ops.toast(&msg);
+                },
+            );
         });
     });
+}
+
+/// Heading and text of the question asked before a recursive permission change.
+pub fn recursive_prompt(scope: Scope, items: u64, name: &str) -> (String, String) {
+    let rule = match scope {
+        Scope::FoldersOnly => "Folders stay searchable wherever they are readable.",
+        Scope::FilesOnly => "Every file gets exactly these permissions, including the executable bit.",
+        _ => "Files keep their executable bit only if they already had one.",
+    };
+    (
+        format!("Change permissions of {} in “{name}”?", plural_items(items)),
+        format!("The new permissions apply to everything inside. {rule} This can’t be undone."),
+    )
+}
+
+/// "1 item", "1,204 items".
+fn plural_items(n: u64) -> String {
+    let digits = n.to_string();
+    let mut grouped = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(ch);
+    }
+    if n == 1 { "1 item".into() } else { format!("{grouped} items") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recursive_prompt_names_the_count_and_the_folder() {
+        let (h, b) = recursive_prompt(Scope::All, 1204, "Photos");
+        assert_eq!(h, "Change permissions of 1,204 items in “Photos”?");
+        assert!(b.contains("executable bit") && b.contains("can’t be undone"));
+        assert_eq!(recursive_prompt(Scope::FilesOnly, 1, "a").0, "Change permissions of 1 item in “a”?");
+        assert_eq!(plural_items(0), "0 items");
+        assert_eq!(plural_items(999), "999 items");
+        assert_eq!(plural_items(1_000_000), "1,000,000 items");
+        assert!(recursive_prompt(Scope::FoldersOnly, 5, "d").1.contains("searchable"));
+        assert!(recursive_prompt(Scope::FilesOnly, 5, "d").1.contains("exactly"));
+    }
 }

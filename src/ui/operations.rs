@@ -19,11 +19,12 @@ use crate::application::state::AppState;
 use crate::core::operations::undo::UndoAction;
 use crate::core::operations::{self, Event, OpKind, OpRequest, Progress, Resolution, Summary};
 use crate::ui::dialogs;
-use crate::ui::island::{Island, Outcome, PauseFn};
+use crate::ui::island::{Action, Island, Outcome, PauseFn};
 
 struct PendingConflict {
     src: String,
     dst: String,
+    remaining: u64,
     reply: mpsc::Sender<Resolution>,
 }
 
@@ -124,7 +125,7 @@ impl OpsUi {
         let this = self.clone();
         glib::spawn_future_local(async move {
             let win = this.0.window.upgrade();
-            let r = dialogs::ask_conflict(win.as_ref(), &p.src, &p.dst).await;
+            let r = dialogs::ask_conflict(win.as_ref(), &p.src, &p.dst, p.remaining).await;
             let _ = p.reply.send(r);
             this.0.showing.set(false);
             this.pump_conflicts();
@@ -181,8 +182,8 @@ impl OpsUi {
                         let bytes = (p.total_bytes > 0).then_some((p.done_bytes, p.total_bytes));
                         this.0.island.progress(id, known.then(|| p.fraction()), &status_text(&p), bytes);
                     }
-                    Event::Conflict { src, dst, reply } => {
-                        this.0.conflicts.borrow_mut().push_back(PendingConflict { src, dst, reply });
+                    Event::Conflict { src, dst, remaining, reply } => {
+                        this.0.conflicts.borrow_mut().push_back(PendingConflict { src, dst, remaining, reply });
                         this.pump_conflicts();
                     }
                     Event::Finished(s) => {
@@ -197,7 +198,7 @@ impl OpsUi {
                 Outcome::Failed {
                     title: format!("{} stopped", req.kind.verb()),
                     detail: "The operation ended unexpectedly.".into(),
-                    retry: None,
+                    action: None,
                 },
             );
         });
@@ -270,6 +271,25 @@ impl OpsUi {
         app.send_notification(None, &n);
     }
 
+    /// "Delete Permanently…" for items that cannot be trashed: asks first, then deletes.
+    fn delete_instead(&self, sources: &[String]) -> Action {
+        let (this, sources) = (self.clone(), sources.to_vec());
+        let run = Rc::new(move || {
+            let (this, sources) = (this.clone(), sources.clone());
+            glib::spawn_future_local(async move {
+                let Some(win) = this.0.window.upgrade() else { return };
+                let first = gio::File::for_uri(&sources[0])
+                    .basename()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if dialogs::confirm_delete(&win, sources.len(), &first).await {
+                    this.submit(OpRequest { kind: OpKind::Delete, sources, dest: None });
+                }
+            });
+        });
+        Action { label: "Delete Permanently…".into(), run }
+    }
+
     fn finished(&self, id: u64, req: &OpRequest, s: Summary, elapsed: Duration) {
         self.record(req, &s);
         self.settled();
@@ -291,15 +311,20 @@ impl OpsUi {
         if s.errors.len() > 1 {
             detail.push_str(&format!("\nand {} more", plural(s.errors.len() - 1)));
         }
-        let retry = (!s.failed_sources.is_empty() && !s.cancelled).then(|| {
+        let action = if s.failed_sources.is_empty() || s.cancelled {
+            None
+        } else if req.kind == OpKind::Trash && !s.errors.is_empty() && s.errors.iter().all(|e| e.not_supported) {
+            // This drive has no trash: Retry would fail the same way. Offer the real way out.
+            Some(self.delete_instead(&s.failed_sources))
+        } else {
             let (this, r) = (self.clone(), OpRequest { sources: s.failed_sources.clone(), ..req.clone() });
-            Rc::new(move || this.submit(r.clone())) as Rc<dyn Fn()>
-        });
+            Some(Action::retry(Rc::new(move || this.submit(r.clone()))))
+        };
         let title = if s.errors.len() == 1 {
             format!("{} failed for 1 item", req.kind.verb())
         } else {
             format!("{} failed for {} items", req.kind.verb(), s.errors.len())
         };
-        self.0.island.finish(id, Outcome::Failed { title, detail, retry });
+        self.0.island.finish(id, Outcome::Failed { title, detail, action });
     }
 }

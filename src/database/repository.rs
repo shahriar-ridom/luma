@@ -224,6 +224,21 @@ impl Database {
         Ok(n > 0)
     }
 
+    /// Change a saved connection. If another row already has `uri`, this row
+    /// is dropped instead (addresses are unique).
+    pub fn update_connection(&self, id: i64, name: &str, uri: &str) -> Result<()> {
+        let taken: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM connections WHERE uri = ?1 AND id <> ?2)",
+            params![uri, id],
+            |r| r.get(0),
+        )?;
+        if taken {
+            return self.remove_connection(id);
+        }
+        self.conn.execute("UPDATE connections SET name = ?2, uri = ?3 WHERE id = ?1", params![id, name, uri])?;
+        Ok(())
+    }
+
     pub fn remove_connection(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM connections WHERE id = ?1", [id])?;
         Ok(())

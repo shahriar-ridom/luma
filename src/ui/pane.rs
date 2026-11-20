@@ -15,6 +15,7 @@ use std::{
 use crate::application::state::AppState;
 use crate::core::filesystem::{self, LoadToken};
 use crate::core::navigation::History;
+use crate::core::operations::rename;
 use crate::core::operations::trash::{TRASH_URI, is_trash};
 use crate::core::operations::undo::UndoAction;
 use crate::core::operations::{OpKind, OpRequest};
@@ -971,16 +972,34 @@ impl Pane {
                 return;
             }
             // GIO refuses to rename onto an existing name, so nothing is overwritten.
-            match file.set_display_name_future(&new, glib::Priority::DEFAULT).await {
-                Ok(renamed) => {
-                    if let (Some(from), Some(to)) = (file.path(), renamed.path()) {
+            // A change of letter case only (`a.txt` → `A.TXT`) is refused as "exists"
+            // on FAT/exFAT/NTFS, where both names are the same file; `rename_many`
+            // knows to go through a temporary name.
+            let result: Result<Option<(std::path::PathBuf, std::path::PathBuf)>, String> = match file.path() {
+                Some(from) if rename::is_case_only_change(&old, &new) => {
+                    let pair = (from.clone(), from.with_file_name(&new));
+                    let arg = pair.clone();
+                    match gio::spawn_blocking(move || rename::rename_many(&[arg])).await {
+                        Ok(Ok(())) => Ok(Some(pair)),
+                        Ok(Err(e)) => Err(e),
+                        Err(_) => Err("the rename was interrupted".into()),
+                    }
+                }
+                _ => match file.set_display_name_future(&new, glib::Priority::DEFAULT).await {
+                    Ok(renamed) => Ok(file.path().zip(renamed.path())),
+                    Err(e) => Err(e.message().to_string()),
+                },
+            };
+            match result {
+                Ok(done) => {
+                    if let Some((from, to)) = done {
                         let st = &this.env.state;
                         let _ = st.db.move_tags(&from, &to);
                         st.undo.push("Rename", UndoAction::Rename(vec![(to, from)]));
                     }
                     this.reload_tags();
                 }
-                Err(e) => this.env.ops.toast(&format!("Could not rename: {}", e.message())),
+                Err(e) => this.env.ops.toast(&format!("Could not rename: {e}")),
             }
         });
     }

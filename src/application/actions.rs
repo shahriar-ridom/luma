@@ -22,6 +22,7 @@ pub const ACTIONS: &[ActionDef] = &[
     a("new-window", "New window", "<Control>n"),
     a("new-tab", "New tab", "<Control>t"),
     a("close-tab", "Close tab", "<Control>w"),
+    a("close", "Close window", "<Control><Shift>w"),
     a("reopen-tab", "Reopen closed tab", "<Control><Shift>t"),
     a("duplicate-tab", "Duplicate tab", ""),
     a("next-tab", "Next tab", "<Control>Page_Down"),

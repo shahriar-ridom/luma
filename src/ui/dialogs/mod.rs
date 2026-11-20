@@ -45,47 +45,67 @@ async fn describe(src: &gio::File, dst: &gio::File) -> String {
         (Some(x), Some(y)) if x < y => "The existing file is more recent.",
         _ => "",
     };
-    format!("{a}\n{b}\n\n{verdict}")
+    format!("{a}\n{b}\n\n{verdict}").trim_end().to_string()
 }
 
 /// Ask what to do about an existing destination file.
-pub async fn ask_conflict(parent: Option<&gtk::Window>, src_uri: &str, dst_uri: &str) -> Resolution {
+///
+/// Three choices, with the one destructive answer (Replace) never next to
+/// another red button. Escape cancels the whole operation. When more items
+/// are still to come, a check box applies the answer to all of them; the
+/// buttons then say so ("Replace All"), so it is never a surprise.
+pub async fn ask_conflict(parent: Option<&gtk::Window>, src_uri: &str, dst_uri: &str, remaining: u64) -> Resolution {
     let (src, dst) = (gio::File::for_uri(src_uri), gio::File::for_uri(dst_uri));
     let name = dst.basename().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut detailed = false;
-    loop {
-        let body = if detailed {
-            describe(&src, &dst).await
-        } else {
-            format!("A file named “{name}” already exists in the destination.")
-        };
-        let d = adw::AlertDialog::new(Some("Replace existing file?"), Some(&body));
-        d.add_responses(&[
-            ("cancel", "Cancel"),
-            ("compare", "Compare"),
-            ("skip", "Skip"),
-            ("skip_all", "Skip All"),
-            ("rename", "Keep Both"),
-            ("replace", "Replace"),
-            ("replace_all", "Replace All"),
-        ]);
-        d.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
-        d.set_response_appearance("replace_all", adw::ResponseAppearance::Destructive);
-        d.set_default_response(Some("skip"));
-        d.set_close_response("cancel");
-        let r = d.choose_future(parent).await;
-        return match r.as_str() {
-            "compare" => {
-                detailed = true;
-                continue;
-            }
-            "skip" => Resolution::Skip,
-            "skip_all" => Resolution::SkipAll,
-            "rename" => Resolution::Rename,
-            "replace" => Resolution::Replace,
-            "replace_all" => Resolution::ReplaceAll,
-            _ => Resolution::Cancel,
-        };
+    let body = format!("A file named “{name}” already exists in the destination. Replacing it can’t be undone.");
+    let d = adw::AlertDialog::new(Some("Replace existing file?"), Some(&body));
+    d.add_responses(&[("skip", "Skip"), ("rename", "Keep Both"), ("replace", "Replace")]);
+    d.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+    d.set_default_response(Some("skip"));
+    d.set_close_response("cancel");
+
+    let col = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    // The comparison is there when wanted, and costs nothing until opened.
+    let compare = gtk::Expander::new(Some("Compare the two files"));
+    let facts = gtk::Label::new(Some("Loading…"));
+    facts.set_xalign(0.0);
+    facts.set_wrap(true);
+    facts.set_selectable(true);
+    facts.set_margin_top(6);
+    compare.set_child(Some(&facts));
+    let loaded = std::cell::Cell::new(false);
+    compare.connect_expanded_notify(move |e| {
+        if e.is_expanded() && !loaded.replace(true) {
+            let (facts, src, dst) = (facts.clone(), src.clone(), dst.clone());
+            glib::spawn_future_local(async move { facts.set_text(&describe(&src, &dst).await) });
+        }
+    });
+    col.append(&compare);
+    let all = gtk::CheckButton::new();
+    // Always offered: even when nothing is left at this level, a folder not yet
+    // entered may still hold more conflicts.
+    let label = match remaining {
+        0 => "Do this for all remaining conflicts".to_string(),
+        1 => "Do this for all remaining conflicts (1 more item to go)".to_string(),
+        n => format!("Do this for all remaining conflicts ({n} more items to go)"),
+    };
+    all.set_label(Some(&label));
+    let d2 = d.clone();
+    all.connect_toggled(move |c| {
+        let on = c.is_active();
+        d2.set_response_label("skip", if on { "Skip All" } else { "Skip" });
+        d2.set_response_label("rename", if on { "Keep All" } else { "Keep Both" });
+        d2.set_response_label("replace", if on { "Replace All" } else { "Replace" });
+    });
+    col.append(&all);
+    d.set_extra_child(Some(&col));
+    let every = |on: bool, once: Resolution, always: Resolution| if on { always } else { once };
+    let on = |a: &gtk::CheckButton| a.is_active();
+    match d.choose_future(parent).await.as_str() {
+        "skip" => every(on(&all), Resolution::Skip, Resolution::SkipAll),
+        "rename" => every(on(&all), Resolution::Rename, Resolution::RenameAll),
+        "replace" => every(on(&all), Resolution::Replace, Resolution::ReplaceAll),
+        _ => Resolution::Cancel,
     }
 }
 
@@ -120,6 +140,12 @@ pub fn invalid_name_reason(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Why the text typed for a name can't be used, if it can't. Spaces are kept
+/// (a name may start or end with one); a name of only spaces counts as empty.
+pub fn name_problem(raw: &str) -> Option<&'static str> {
+    invalid_name_reason(if raw.trim().is_empty() { "" } else { raw })
+}
+
 /// Prompt for a file name. Returns `None` if cancelled. An invalid name
 /// re-opens the prompt with the reason instead of being dropped silently.
 pub async fn prompt_name(parent: &gtk::Window, heading: &str, action: &str, initial: &str) -> Option<String> {
@@ -150,8 +176,8 @@ pub async fn prompt_name(parent: &gtk::Window, heading: &str, action: &str, init
         if d.choose_future(Some(parent)).await != "ok" {
             return None;
         }
-        text = entry.text().trim().to_string();
-        match invalid_name_reason(&text) {
+        text = entry.text().to_string();
+        match name_problem(&text) {
             None => return Some(text),
             Some(why) => problem = Some(why),
         }
@@ -165,7 +191,13 @@ pub fn error(parent: &gtk::Window, heading: &str, body: &str) {
 }
 
 /// Yes/no question. `destructive` styles the confirm button red.
-pub async fn confirm(parent: &gtk::Window, heading: &str, body: &str, action: &str, destructive: bool) -> bool {
+pub async fn confirm(
+    parent: &impl IsA<gtk::Widget>,
+    heading: &str,
+    body: &str,
+    action: &str,
+    destructive: bool,
+) -> bool {
     let d = adw::AlertDialog::new(Some(heading), Some(body));
     d.add_responses(&[("cancel", "Cancel"), ("ok", action)]);
     d.set_response_appearance(
@@ -207,7 +239,16 @@ pub async fn prompt_text(parent: &gtk::Window, heading: &str, action: &str, hint
 
 #[cfg(test)]
 mod tests {
-    use super::invalid_name_reason;
+    use super::{invalid_name_reason, name_problem};
+
+    #[test]
+    fn typed_names_keep_their_spaces() {
+        // Renaming " notes.txt" and pressing Enter must not quietly drop the space.
+        assert_eq!(name_problem(" notes.txt "), None);
+        assert_eq!(name_problem("a b"), None);
+        assert!(name_problem("   ").is_some() && name_problem("").is_some());
+        assert!(name_problem(" a/b ").is_some());
+    }
 
     #[test]
     fn name_validation() {

@@ -93,7 +93,14 @@ pub fn show(parent: &gtk::Window, root: PathBuf, on_trash: Rc<dyn Fn(Vec<PathBuf
         }
         g2.borrow_mut().clear();
         let min = [0u64, 1 << 10, 1 << 20, 100 << 20][sizes2.selected() as usize];
-        let (c, rx) = duplicates::spawn(root2.clone(), hidden2.is_active(), min);
+        let (c, rx) = duplicates::spawn(
+            root2.clone(),
+            hidden2.is_active(),
+            min,
+            // Hashing every file of a network or cloud drive (or of another disk the
+            // user did not pick) is never what "find duplicates here" means.
+            crate::core::filesystem::WalkLimits { skip: crate::integrations::network::remote_trees(), same_fs: true },
+        );
         *running2.borrow_mut() = Some(c);
         spinner2.start();
         status2.set_text("Scanning…");

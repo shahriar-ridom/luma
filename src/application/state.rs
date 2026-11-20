@@ -25,6 +25,7 @@ impl AppState {
             tracing::warn!("database unavailable ({e:#}); using a temporary in-memory one");
             Database::open_in_memory().expect("in-memory sqlite")
         });
+        scrub_saved_connections(&db);
         let prefs = persistence::load(&db);
         let s = Rc::new(Self { db, prefs, undo: UndoStack::default(), ext: RefCell::default() });
         s.reload_extensions();
@@ -36,6 +37,28 @@ impl AppState {
         let custom = self.db.custom_actions().unwrap_or_default();
         let dirs: Vec<PathBuf> = vec![user_plugin_dir(), PathBuf::from("/usr/share/luma/plugins")];
         *self.ext.borrow_mut() = Extensions::load(&custom, &dirs, |id| self.prefs.plugin_enabled(id));
+    }
+}
+
+/// Older versions saved `sftp://user:password@host` as typed, in the database
+/// and as the sidebar label. Rewrite those rows without the password.
+pub fn scrub_saved_connections(db: &Database) {
+    use crate::integrations::network::{is_generated_label, label_for, strip_uri_password};
+    let mut changed = false;
+    for c in db.connections().unwrap_or_default() {
+        let clean = strip_uri_password(&c.uri);
+        if clean == c.uri {
+            continue;
+        }
+        // A generated name carried the password too; one the user chose is left alone.
+        let name = if is_generated_label(&c.name, &c.uri) { label_for(&clean) } else { c.name.clone() };
+        match db.update_connection(c.id, &name, &clean) {
+            Ok(()) => changed = true,
+            Err(e) => tracing::warn!("could not remove a saved password: {e:#}"),
+        }
+    }
+    if changed {
+        db.purge_deleted(); // the old text must not stay in free pages or the WAL
     }
 }
 
@@ -66,6 +89,30 @@ pub fn migrate_legacy_data(data_home: &std::path::Path) {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn saved_passwords_are_scrubbed_at_startup() {
+        let db = Database::open_in_memory().unwrap();
+        db.add_connection("me:hunter2@box/srv (SFTP)", "sftp://me:hunter2@box/srv").unwrap();
+        db.add_connection("My NAS", "smb://u:pw@nas/share").unwrap();
+        db.add_connection("dup (SFTP)", "sftp://me@dup/x").unwrap();
+        db.add_connection("dup with pw", "sftp://me:pw@dup/x").unwrap();
+        db.add_connection("fine", "ftp://host").unwrap();
+        scrub_saved_connections(&db);
+        let rows: Vec<(String, String)> = db.connections().unwrap().into_iter().map(|c| (c.name, c.uri)).collect();
+        let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(
+            rows,
+            [
+                s("me@box/srv (SFTP)", "sftp://me@box/srv"),
+                s("My NAS", "smb://u@nas/share"),
+                s("dup (SFTP)", "sftp://me@dup/x"),
+                s("fine", "ftp://host"),
+            ]
+        );
+        scrub_saved_connections(&db); // idempotent
+        assert_eq!(db.connections().unwrap().len(), 4);
+    }
 
     #[test]
     fn legacy_data_moves_once_and_never_overwrites() {

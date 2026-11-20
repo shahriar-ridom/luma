@@ -98,7 +98,6 @@ jobs:
   audit:
     name: Dependency advisories
     runs-on: ubuntu-24.04
-    continue-on-error: true
     permissions:
       contents: read
       checks: write

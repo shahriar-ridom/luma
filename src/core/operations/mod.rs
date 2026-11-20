@@ -68,6 +68,7 @@ pub enum Resolution {
     Rename,
     ReplaceAll,
     SkipAll,
+    RenameAll,
     Cancel,
 }
 
@@ -96,6 +97,9 @@ impl Progress {
 pub struct OpError {
     pub uri: String,
     pub message: String,
+    /// The location can't do this at all (e.g. no trash on this drive), so
+    /// trying again can only fail the same way.
+    pub not_supported: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -116,7 +120,15 @@ pub struct Summary {
 
 pub enum Event {
     Progress(Progress),
-    Conflict { src: String, dst: String, reply: mpsc::Sender<Resolution> },
+    /// `remaining` is how many more items are still to be handled after this
+    /// one, at every level of the tree being walked (an upper bound on the
+    /// conflicts still to come).
+    Conflict {
+        src: String,
+        dst: String,
+        remaining: u64,
+        reply: mpsc::Sender<Resolution>,
+    },
     Finished(Summary),
 }
 
@@ -139,19 +151,7 @@ impl Control {
 pub fn spawn(req: OpRequest) -> (Control, async_channel::Receiver<Event>) {
     let (tx, rx) = async_channel::unbounded();
     let control = Control { cancel: gio::Cancellable::new(), paused: Arc::new(AtomicBool::new(false)) };
-    let ctx = Ctx {
-        tx,
-        cancel: control.cancel.clone(),
-        paused: control.paused.clone(),
-        policy: None,
-        p: Progress::default(),
-        errors: Vec::new(),
-        last_emit: Instant::now() - Duration::from_secs(1),
-        done: Vec::new(),
-        last_dst: None,
-        not_undoable: false,
-        disk_full: false,
-    };
+    let ctx = Ctx::new(tx, control.cancel.clone(), control.paused.clone(), None);
     std::thread::Builder::new()
         .name("fm-operation".into())
         .spawn(move || run(ctx, req))
@@ -173,6 +173,10 @@ struct Ctx {
     not_undoable: bool,
     /// A write failed because the disk is full (checked by error kind, not text).
     disk_full: bool,
+    /// Top-level sources still to come after the current one.
+    sources_left: u64,
+    /// For each folder being walked: items still to come after the current one.
+    levels: Vec<u64>,
 }
 
 enum Resolved {
@@ -184,6 +188,36 @@ enum Resolved {
 const NOFOLLOW: gio::FileQueryInfoFlags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
 
 impl Ctx {
+    fn new(
+        tx: async_channel::Sender<Event>,
+        cancel: gio::Cancellable,
+        paused: Arc<AtomicBool>,
+        policy: Option<Resolution>,
+    ) -> Self {
+        Self {
+            tx,
+            cancel,
+            paused,
+            policy,
+            p: Progress::default(),
+            errors: Vec::new(),
+            last_emit: Instant::now() - Duration::from_secs(1),
+            done: Vec::new(),
+            last_dst: None,
+            not_undoable: false,
+            disk_full: false,
+            sources_left: 0,
+            levels: Vec::new(),
+        }
+    }
+
+    /// For work done outside an operation (undo): nothing listens, and
+    /// anything that would need an answer is skipped.
+    fn headless() -> Self {
+        let (tx, _rx) = async_channel::unbounded();
+        Self::new(tx, gio::Cancellable::new(), Arc::new(AtomicBool::new(false)), Some(Resolution::SkipAll))
+    }
+
     fn cancelled(&self) -> bool {
         self.cancel.is_cancelled()
     }
@@ -209,16 +243,21 @@ impl Ctx {
         if e.matches(gio::IOErrorEnum::NoSpace) {
             self.disk_full = true;
         }
-        self.errors.push(OpError { uri: f.uri().to_string(), message: e.message().to_string() });
+        self.errors.push(OpError {
+            uri: f.uri().to_string(),
+            message: e.message().to_string(),
+            not_supported: e.matches(gio::IOErrorEnum::NotSupported),
+        });
     }
 
     fn error_msg(&mut self, f: &gio::File, msg: &str) {
-        self.errors.push(OpError { uri: f.uri().to_string(), message: msg.to_string() });
+        self.errors.push(OpError { uri: f.uri().to_string(), message: msg.to_string(), not_supported: false });
     }
 
     fn ask(&mut self, src: &gio::File, dst: &gio::File) -> Resolution {
         let (rtx, rrx) = mpsc::channel();
-        let ev = Event::Conflict { src: src.uri().to_string(), dst: dst.uri().to_string(), reply: rtx };
+        let remaining = self.sources_left + self.levels.iter().sum::<u64>();
+        let ev = Event::Conflict { src: src.uri().to_string(), dst: dst.uri().to_string(), remaining, reply: rtx };
         if self.tx.send_blocking(ev).is_err() {
             return Resolution::Cancel;
         }
@@ -269,7 +308,10 @@ impl Ctx {
                 self.policy = Some(Resolution::SkipAll);
                 Resolved::Skip
             }
-            Resolution::Rename => {
+            Resolution::Rename | Resolution::RenameAll => {
+                if choice == Resolution::RenameAll {
+                    self.policy = Some(Resolution::RenameAll);
+                }
                 let parent = dst.parent().unwrap_or_else(|| dst.clone());
                 let name = dst.basename().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 Resolved::Proceed { dst: unique_name(&parent, &name), overwrite: false }
@@ -280,6 +322,16 @@ impl Ctx {
             }
         }
     }
+}
+
+/// Are these two paths the very same file or folder, reached by different
+/// routes (a symlinked or bind-mounted parent)? Comparing URIs misses that.
+fn same_inode(a: &gio::File, b: &gio::File) -> bool {
+    let id = |f: &gio::File| {
+        let i = f.query_info("unix::device,unix::inode", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE).ok()?;
+        Some((i.attribute_uint32("unix::device"), i.attribute_uint64("unix::inode")))
+    };
+    matches!((id(a), id(b)), (Some(x), Some(y)) if x.1 != 0 && x == y)
 }
 
 fn file_type(f: &gio::File) -> gio::FileType {
@@ -350,7 +402,9 @@ fn run(mut ctx: Ctx, req: OpRequest) {
     ctx.emit(true);
 
     let dest = req.dest.as_deref().map(gio::File::for_uri);
-    for (uri, src) in req.sources.iter().zip(&sources) {
+    for (i, (uri, src)) in req.sources.iter().zip(&sources).enumerate() {
+        ctx.sources_left = (sources.len() - i - 1) as u64;
+        ctx.levels.clear();
         if ctx.cancelled() {
             failed.push(uri.clone());
             continue;
@@ -404,7 +458,7 @@ fn transfer(ctx: &mut Ctx, src: &gio::File, dest_dir: &gio::File, mv: bool) -> b
     let name = name.to_string_lossy().into_owned();
     let mut dst = dest_dir.child(&name);
 
-    if src.equal(&dst) {
+    if src.equal(&dst) || (mv && same_inode(src, &dst)) {
         if mv {
             ctx.p.items_done += 1;
             return true; // moving onto itself is a no-op
@@ -425,20 +479,130 @@ fn transfer(ctx: &mut Ctx, src: &gio::File, dest_dir: &gio::File, mv: bool) -> b
         return copy_tree(ctx, src, &dst, overwrite);
     }
 
+    // Two folders with the same name: merge them child by child, asking about
+    // each conflict, instead of failing with "File exists".
+    if !overwrite && file_type(&dst) == gio::FileType::Directory && file_type(src) == gio::FileType::Directory {
+        return move_merge(ctx, src, &dst);
+    }
+    move_one(ctx, src, &dst, overwrite)
+}
+
+/// Move one item to exactly `dst`. Folders that cannot be renamed (another
+/// file system) are copied and then deleted, but only after a complete copy.
+fn move_one(ctx: &mut Ctx, src: &gio::File, dst: &gio::File, overwrite: bool) -> bool {
     let mut flags = gio::FileCopyFlags::NOFOLLOW_SYMLINKS | gio::FileCopyFlags::ALL_METADATA;
     if overwrite {
         flags |= gio::FileCopyFlags::OVERWRITE;
     }
     let cancel = ctx.cancel.clone();
-    match src.move_(&dst, flags, Some(&cancel), None) {
+    match src.move_(dst, flags, Some(&cancel), None) {
         Ok(()) => {
             ctx.p.items_done += 1;
             true
         }
         Err(e) if e.matches(gio::IOErrorEnum::WouldRecurse) || e.matches(gio::IOErrorEnum::WouldMerge) => {
             // Cross-device folder or merge: copy everything, then delete the
-            // source only if the whole copy succeeded.
-            if copy_tree(ctx, src, &dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src, false) } else { false }
+            // source only if the whole copy succeeded. Both passes visit
+            // every item, and the copy moves the bytes: add that to the
+            // totals (the folder itself was already counted once).
+            let (mut bytes, mut items) = (0, 0);
+            scan(src, &cancel, &mut bytes, &mut items);
+            ctx.p.items_total += (2 * items).saturating_sub(1);
+            ctx.p.total_bytes += bytes;
+            if copy_tree(ctx, src, dst, overwrite) && !ctx.cancelled() { delete_tree(ctx, src, false) } else { false }
+        }
+        Err(e) => {
+            ctx.error(src, &e);
+            false
+        }
+    }
+}
+
+/// Move `src` to exactly `dst`, never replacing anything, falling back to copy
+/// and delete across file systems (GIO cannot move a folder between them).
+/// Blocking: call it from a worker thread.
+pub fn move_exact(src: &gio::File, dst: &gio::File) -> Result<(), String> {
+    let flags = gio::FileCopyFlags::NOFOLLOW_SYMLINKS | gio::FileCopyFlags::ALL_METADATA;
+    match src.move_(dst, flags, gio::Cancellable::NONE, None) {
+        Ok(()) => Ok(()),
+        Err(e) if e.matches(gio::IOErrorEnum::WouldRecurse) || e.matches(gio::IOErrorEnum::WouldMerge) => {
+            // Create `dst` ourselves, strictly: if it appeared in the meantime we
+            // stop instead of merging into (and later cleaning up) someone else's folder.
+            if let Err(e) = dst.make_directory(gio::Cancellable::NONE) {
+                return Err(if e.matches(gio::IOErrorEnum::Exists) {
+                    format!("{} already exists", dst.parse_name())
+                } else {
+                    e.message().to_string()
+                });
+            }
+            let mut ctx = Ctx::headless();
+            let reason = |ctx: &Ctx| {
+                if ctx.disk_full {
+                    "not enough space".to_string()
+                } else {
+                    ctx.errors.first().map_or_else(|| "the move failed".to_string(), |e| e.message.clone())
+                }
+            };
+            if !copy_tree(&mut ctx, src, dst, false) {
+                // Nothing was lost: the source is untouched, and everything in `dst` is our own partial copy.
+                let why = reason(&ctx);
+                let _ = delete_tree(&mut Ctx::headless(), dst, false);
+                return Err(why);
+            }
+            if !delete_tree(&mut ctx, src, false) {
+                // The copy is complete; keep it, and say what is left behind.
+                return Err(format!("{}; the original could not be fully removed", reason(&ctx)));
+            }
+            Ok(())
+        }
+        Err(e) => Err(e.message().to_string()),
+    }
+}
+
+/// Move the contents of folder `src` into the existing folder `dst`. The
+/// source folder is removed only if everything in it was moved.
+fn move_merge(ctx: &mut Ctx, src: &gio::File, dst: &gio::File) -> bool {
+    let cancel = ctx.cancel.clone();
+    let names: Vec<_> = match src.enumerate_children("standard::name", NOFOLLOW, Some(&cancel)) {
+        Ok(en) => en.flatten().map(|i| i.name()).collect(),
+        Err(e) => {
+            ctx.error(src, &e);
+            return false;
+        }
+    };
+    ctx.p.items_total += names.len() as u64; // each child counts once, like the folder itself
+    let mut ok = true;
+    ctx.levels.push(0);
+    let count = names.len();
+    for (i, name) in names.into_iter().enumerate() {
+        if ctx.cancelled() {
+            ctx.levels.pop();
+            return false;
+        }
+        *ctx.levels.last_mut().expect("pushed above") = (count - i - 1) as u64;
+        let csrc = src.child(&name);
+        match ctx.resolve(&csrc, dst.child(&name)) {
+            Resolved::Proceed { dst: cdst, overwrite } => {
+                let both_dirs = !overwrite
+                    && file_type(&cdst) == gio::FileType::Directory
+                    && file_type(&csrc) == gio::FileType::Directory;
+                ok &= if both_dirs { move_merge(ctx, &csrc, &cdst) } else { move_one(ctx, &csrc, &cdst, overwrite) };
+            }
+            Resolved::Skip => ok = false,
+            Resolved::Cancel => {
+                ctx.levels.pop();
+                return false;
+            }
+        }
+    }
+    ctx.levels.pop();
+    if !ok {
+        return false;
+    }
+    match src.delete(Some(&cancel)) {
+        Ok(()) => {
+            ctx.p.items_done += 1;
+            true
         }
         Err(e) => {
             ctx.error(src, &e);
@@ -464,21 +628,31 @@ fn copy_tree(ctx: &mut Ctx, src: &gio::File, dst: &gio::File, overwrite: bool) -
         let mut ok = true;
         match src.enumerate_children("standard::name", NOFOLLOW, Some(&cancel)) {
             Ok(en) => {
+                let mut names = Vec::new();
                 for child in en {
-                    let Ok(child) = child else {
-                        ok = false;
-                        continue;
-                    };
+                    match child {
+                        Ok(c) => names.push(c.name()),
+                        Err(_) => ok = false,
+                    }
+                }
+                ctx.levels.push(0);
+                for (i, name) in names.iter().enumerate() {
                     if ctx.cancelled() {
+                        ctx.levels.pop();
                         return false;
                     }
-                    let (csrc, cdst) = (src.child(child.name()), dst.child(child.name()));
+                    *ctx.levels.last_mut().expect("pushed above") = (names.len() - i - 1) as u64;
+                    let (csrc, cdst) = (src.child(name), dst.child(name));
                     match ctx.resolve(&csrc, cdst) {
                         Resolved::Proceed { dst, overwrite } => ok &= copy_tree(ctx, &csrc, &dst, overwrite),
                         Resolved::Skip => ok = false,
-                        Resolved::Cancel => return false,
+                        Resolved::Cancel => {
+                            ctx.levels.pop();
+                            return false;
+                        }
                     }
                 }
+                ctx.levels.pop();
             }
             Err(e) => {
                 ctx.error(src, &e);
@@ -587,6 +761,23 @@ fn delete_tree(ctx: &mut Ctx, f: &gio::File, inside: bool) -> bool {
     }
 }
 
+/// A scratch folder on another file system than `target/test-tmp` (tmpfs in
+/// `/dev/shm`), for the cross-device paths; `None` if there is none.
+#[cfg(test)]
+pub(crate) fn other_fs_dir(name: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let here = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
+    std::fs::create_dir_all(&here).ok()?;
+    let there = std::path::PathBuf::from("/dev/shm").join(format!("luma-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&there);
+    std::fs::create_dir_all(&there).ok()?;
+    if std::fs::metadata(&here).ok()?.dev() == std::fs::metadata(&there).ok()?.dev() {
+        let _ = std::fs::remove_dir_all(&there);
+        return None;
+    }
+    Some(there)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,6 +834,22 @@ mod tests {
     }
 
     #[test]
+    fn keep_both_for_all_asks_only_once() {
+        let (a, b) = setup("rename-all");
+        fs::write(a.join("dir/f2.txt"), "new2").unwrap();
+        fs::create_dir_all(b.join("dir")).unwrap();
+        fs::write(b.join("dir/f.txt"), "old").unwrap();
+        fs::write(b.join("dir/f2.txt"), "old2").unwrap();
+        let req = OpRequest { kind: OpKind::Copy, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, n) = run_op(req, Resolution::RenameAll);
+        assert_eq!(n, 1, "the answer applies to every later conflict");
+        assert!(s.errors.is_empty());
+        assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(b.join("dir/f (copy).txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(b.join("dir/f2 (copy).txt")).unwrap(), "new2");
+    }
+
+    #[test]
     fn replace_and_rename() {
         let (a, b) = setup("replace");
         fs::create_dir_all(b.join("dir")).unwrap();
@@ -656,16 +863,179 @@ mod tests {
     }
 
     #[test]
+    fn move_onto_same_named_folder_merges() {
+        let (a, b) = setup("move-merge");
+        fs::create_dir_all(b.join("dir")).unwrap();
+        fs::write(b.join("dir/old.txt"), "old").unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, n) = run_op(req, Resolution::Skip);
+        assert_eq!(n, 0, "nothing inside conflicts");
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert!(s.failed_sources.is_empty());
+        assert_eq!(fs::read_to_string(b.join("dir/old.txt")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
+        assert!(!a.join("dir").exists(), "the emptied source folder is removed");
+        assert!(!s.undoable, "a merge cannot be undone");
+    }
+
+    #[test]
+    fn move_merge_asks_about_each_conflict() {
+        let (a, b) = setup("move-merge-ask");
+        fs::create_dir_all(b.join("dir/sub")).unwrap();
+        fs::write(b.join("dir/f.txt"), "old").unwrap();
+        fs::write(b.join("dir/sub/g.txt"), "old-g").unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, n) = run_op(req.clone(), Resolution::Replace);
+        assert_eq!(n, 2);
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
+        assert!(!a.join("dir").exists());
+    }
+
+    #[test]
+    fn moving_a_folder_onto_itself_through_a_symlink_is_a_no_op() {
+        let (a, b) = setup("move-self");
+        // `b/link` leads back to `a`, so `b/link/dir` is `a/dir` itself.
+        std::os::unix::fs::symlink(&a, b.join("link")).unwrap();
+        let req =
+            OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b.join("link"))) };
+        let (s, n) = run_op(req, Resolution::Skip);
+        assert_eq!(n, 0, "no file may be asked about against itself");
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_eq!(fs::read_to_string(a.join("dir/f.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(a.join("dir/sub/g.txt")).unwrap(), "deep");
+    }
+
+    #[test]
     fn move_and_skip_keeps_source() {
         let (a, b) = setup("move");
         fs::create_dir_all(b.join("dir")).unwrap();
         fs::write(b.join("dir/f.txt"), "old").unwrap();
         let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
-        let (s, _) = run_op(req, Resolution::Skip);
-        // Skipped file must not be lost: the source folder still has it.
-        assert!(a.join("dir/f.txt").exists());
+        let (s, n) = run_op(req, Resolution::Skip);
+        assert_eq!(n, 1, "exactly one conflict is asked about: f.txt");
+        // The skipped file must not be lost: the source folder still has it …
+        assert_eq!(fs::read_to_string(a.join("dir/f.txt")).unwrap(), "new");
         assert_eq!(fs::read_to_string(b.join("dir/f.txt")).unwrap(), "old");
+        // … while everything that did not conflict was moved.
+        assert_eq!(fs::read_to_string(b.join("dir/sub/g.txt")).unwrap(), "deep");
+        assert!(!a.join("dir/sub").exists());
         assert_eq!(s.failed_sources.len(), 1);
+    }
+
+    /// Like `run_op`, also returning every progress report.
+    fn run_op_progress(req: OpRequest, answer: Resolution) -> (Summary, Vec<Progress>) {
+        let (_c, rx) = spawn(req);
+        let mut seen = Vec::new();
+        loop {
+            match rx.recv_blocking().unwrap() {
+                Event::Conflict { reply, .. } => reply.send(answer).unwrap(),
+                Event::Finished(s) => return (s, seen),
+                Event::Progress(p) => seen.push(p),
+            }
+        }
+    }
+
+    fn assert_never_overshoots(seen: &[Progress]) {
+        assert!(!seen.is_empty());
+        for p in seen {
+            assert!(p.items_done <= p.items_total, "items {}/{}", p.items_done, p.items_total);
+            assert!(p.total_bytes == 0 || p.done_bytes <= p.total_bytes, "bytes {}/{}", p.done_bytes, p.total_bytes);
+        }
+    }
+
+    #[test]
+    fn move_progress_never_overshoots_on_merge_or_cross_device() {
+        let (a, b) = setup("move-progress");
+        fs::create_dir_all(b.join("dir")).unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let (s, seen) = run_op_progress(req, Resolution::Skip);
+        assert!(s.errors.is_empty());
+        assert_never_overshoots(&seen);
+
+        let Some(shm) = other_fs_dir("progress") else { return };
+        fs::create_dir_all(shm.join("src/dir/sub")).unwrap();
+        fs::write(shm.join("src/dir/f.txt"), "new").unwrap();
+        fs::write(shm.join("src/dir/sub/g.txt"), "deep").unwrap();
+        let fresh = a.join("fresh");
+        fs::create_dir_all(&fresh).unwrap();
+        let req = OpRequest { kind: OpKind::Move, sources: vec![uri(&shm.join("src/dir"))], dest: Some(uri(&fresh)) };
+        let (s, seen) = run_op_progress(req, Resolution::Skip);
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert_never_overshoots(&seen);
+        let last = seen.last().unwrap();
+        assert_eq!(last.items_done, last.items_total, "a finished move reports 100%");
+        assert!(fresh.join("dir/sub/g.txt").exists() && !shm.join("src/dir").exists());
+        let _ = fs::remove_dir_all(&shm);
+    }
+
+    #[test]
+    fn conflicts_say_how_many_items_are_still_to_come() {
+        let (a, b) = setup("remaining");
+        // Only the three conflicting files, so the order the folder is read in cannot matter.
+        fs::remove_file(a.join("dir/f.txt")).unwrap();
+        fs::remove_dir_all(a.join("dir/sub")).unwrap();
+        // Three files in one folder that all exist in the destination.
+        for n in ["f1", "f2", "f3"] {
+            fs::write(a.join("dir").join(n), "new").unwrap();
+        }
+        fs::create_dir_all(b.join("dir")).unwrap();
+        for n in ["f1", "f2", "f3"] {
+            fs::write(b.join("dir").join(n), "old").unwrap();
+        }
+        fs::write(a.join("one.txt"), "n").unwrap();
+        fs::write(a.join("two.txt"), "n").unwrap();
+        fs::write(b.join("one.txt"), "o").unwrap();
+        fs::write(b.join("two.txt"), "o").unwrap();
+        let remaining = |req: OpRequest| {
+            let (_c, rx) = spawn(req);
+            let mut seen = Vec::new();
+            loop {
+                match rx.recv_blocking().unwrap() {
+                    Event::Conflict { reply, remaining, .. } => {
+                        seen.push(remaining);
+                        reply.send(Resolution::Skip).unwrap();
+                    }
+                    Event::Finished(_) => return seen,
+                    Event::Progress(_) => {}
+                }
+            }
+        };
+        // Top-level sources: the other one is still to come after the first.
+        let two = OpRequest {
+            kind: OpKind::Copy,
+            sources: vec![uri(&a.join("one.txt")), uri(&a.join("two.txt"))],
+            dest: Some(uri(&b)),
+        };
+        assert_eq!(remaining(two), [1, 0]);
+        // Inside a folder: the siblings that follow.
+        let dir = OpRequest { kind: OpKind::Copy, sources: vec![uri(&a.join("dir"))], dest: Some(uri(&b)) };
+        let mut got = remaining(dir.clone());
+        got.sort_unstable();
+        assert_eq!(got, [0, 1, 2]);
+        // A move that merges counts the same way.
+        let mut got = remaining(OpRequest { kind: OpKind::Move, ..dir });
+        got.sort_unstable();
+        assert_eq!(got, [0, 1, 2]);
+    }
+
+    #[test]
+    fn errors_remember_when_the_location_cannot_do_it() {
+        let mut ctx = Ctx::headless();
+        let f = gio::File::for_path("/x/y");
+        ctx.error(
+            &f,
+            &gtk::glib::Error::new(
+                gio::IOErrorEnum::NotSupported,
+                "Trashing on system internal mounts is not supported",
+            ),
+        );
+        ctx.error(&f, &gtk::glib::Error::new(gio::IOErrorEnum::PermissionDenied, "denied"));
+        ctx.error_msg(&f, "plain");
+        let flags: Vec<bool> = ctx.errors.iter().map(|e| e.not_supported).collect();
+        assert_eq!(flags, [true, false, false]);
     }
 
     #[test]
@@ -703,6 +1073,10 @@ mod tests {
         let (s, _) = run_op(req, Resolution::Skip);
         assert!(s.errors.is_empty(), "{:?}", s.errors);
         assert!(!a.join("dir").exists());
+        // Root bypasses permission checks, so the protection below cannot be observed.
+        if nix::unistd::geteuid().is_root() {
+            return;
+        }
         // A single file in a read-only folder the user did not choose stays protected.
         fs::create_dir_all(a.join("ro")).unwrap();
         fs::write(a.join("ro/keep"), "k").unwrap();

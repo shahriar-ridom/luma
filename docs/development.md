@@ -85,7 +85,7 @@ All workflows live in `.github/workflows/`.
 | **test** | build and run the test suite on Ubuntu 24.04 |
 | **distros** | build and test inside Fedora and Arch containers (newer GTK and libadwaita than Ubuntu) |
 | **metadata** | validate the desktop entry and AppStream file, check version consistency, syntax-check the shell scripts |
-| **audit** | `cargo audit` against the RustSec database (advisory) |
+| **audit** | `cargo audit` against the RustSec database; a new advisory fails the build |
 
 Dependabot keeps Cargo dependencies and GitHub Actions up to date.
 

@@ -1,5 +1,6 @@
 use adw::prelude::*;
 use std::{
+    cell::Cell,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -19,6 +20,32 @@ impl Breadcrumb {
         widget.set_child(Some(&row));
         widget.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
         widget.set_hexpand(true);
+        widget.add_css_class("fm-crumb-scroll");
+        // A focused crumb (the first one, usually) would otherwise scroll itself
+        // into view and undo the pinning below.
+        if let Some(viewport) = widget.child().and_downcast::<gtk::Viewport>() {
+            viewport.set_scroll_to_focus(false);
+        }
+        // There is no scrollbar, so keep the current folder (the last crumb) in
+        // view whenever the content or the width changes: a new path, a split,
+        // a resize. Doing it once after `set_path` missed panes that had no
+        // final width yet.
+        let adj = widget.hadjustment();
+        // Moved after the layout pass that reported the change: moving it
+        // during that pass is not drawn until something else relayouts.
+        let pending = Rc::new(Cell::new(false));
+        let pin = move |a: &gtk::Adjustment| {
+            if pending.replace(true) {
+                return;
+            }
+            let (a, pending) = (a.clone(), pending.clone());
+            gtk::glib::idle_add_local_once(move || {
+                pending.set(false);
+                a.set_value(a.upper() - a.page_size());
+            });
+        };
+        adj.connect_upper_notify(pin.clone());
+        adj.connect_page_size_notify(pin);
         Self { widget, row, on_nav: Rc::new(on_nav) }
     }
 
@@ -54,8 +81,5 @@ impl Breadcrumb {
             b.connect_clicked(move |_| cb(p.clone()));
             self.row.append(&b);
         }
-        // Keep the tail (current folder) visible.
-        let adj = self.widget.hadjustment();
-        gtk::glib::idle_add_local_once(move || adj.set_value(adj.upper()));
     }
 }

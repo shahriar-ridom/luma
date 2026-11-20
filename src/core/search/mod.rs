@@ -5,6 +5,7 @@ use gtk::gio;
 use std::{
     fs,
     io::{BufRead, BufReader, Read},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -103,6 +104,8 @@ pub struct SearchQuery {
     pub hidden: bool,
     /// Trees whose file contents must not be read (e.g. cloud mounts).
     pub no_content: Vec<PathBuf>,
+    /// Trees (and, with `same_fs`, file systems) the walk stays out of.
+    pub limits: crate::core::filesystem::WalkLimits,
 }
 
 #[derive(Clone, Debug)]
@@ -232,6 +235,7 @@ pub fn run(q: &SearchQuery, cancel: &AtomicBool, mut emit: impl FnMut(SearchEven
     let mut last = Instant::now();
     let mut truncated = false;
     let size_filter = q.min_size.is_some() || q.max_size.is_some();
+    let walker = q.limits.walker(&q.root);
 
     'walk: while let Some(dir) = stack.pop() {
         let Ok(rd) = fs::read_dir(&dir) else { continue };
@@ -247,10 +251,11 @@ pub fn run(q: &SearchQuery, cancel: &AtomicBool, mut emit: impl FnMut(SearchEven
             let path = ent.path();
             scanned += 1;
             let is_dir = ft.is_dir();
-            if is_dir && q.recursive && !is_pseudo(&path) {
+            let md = ent.metadata();
+            if is_dir && q.recursive && !is_pseudo(&path) && walker.enters(&path, md.as_ref().map_or(0, |m| m.dev())) {
                 stack.push(path.clone());
             }
-            let Ok(md) = ent.metadata() else { continue };
+            let Ok(md) = md else { continue };
             let size = if is_dir { 0 } else { md.len() };
             let mtime = md
                 .modified()
@@ -343,6 +348,17 @@ mod tests {
 
     fn base(root: &Path) -> SearchQuery {
         SearchQuery { root: root.to_path_buf(), recursive: true, ..Default::default() }
+    }
+
+    #[test]
+    fn skipped_trees_are_not_walked() {
+        let r = tree("search_skip");
+        fs::create_dir_all(r.join("cloud/drive")).unwrap();
+        fs::write(r.join("cloud/drive/remote-notes.txt"), "x").unwrap();
+        let q = SearchQuery { name: "notes".into(), ..base(&r) };
+        assert_eq!(search(q.clone()), ["Notes.TXT", "remote-notes.txt"]);
+        let limits = crate::core::filesystem::WalkLimits { skip: vec![r.join("cloud")], same_fs: true };
+        assert_eq!(search(SearchQuery { limits, ..q }), ["Notes.TXT"]);
     }
 
     #[test]

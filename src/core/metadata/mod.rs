@@ -102,6 +102,10 @@ pub fn checksum(path: &Path, algo: Algo, cancel: &AtomicBool) -> io::Result<Opti
 
 /// Like [`checksum`] but only over the first `max_bytes`.
 pub fn checksum_prefix(path: &Path, algo: Algo, max_bytes: u64, cancel: &AtomicBool) -> io::Result<Option<String>> {
+    // Opening a FIFO blocks until a writer appears, and a device never ends.
+    if !fs::metadata(path)?.is_file() {
+        return Err(io::Error::other("only regular files have a checksum"));
+    }
     let mut f = fs::File::open(path)?.take(max_bytes);
     let mut sum = Checksum::new(algo.ty()).ok_or_else(|| io::Error::other("unsupported checksum"))?;
     let mut buf = vec![0u8; 1 << 20];
@@ -128,6 +132,18 @@ mod tests {
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn checksum_refuses_fifos_instead_of_hanging() {
+        let d = tmp("checksum-fifo");
+        let fifo = d.join("fifo");
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(checksum(&fifo, Algo::Sha256, &AtomicBool::new(false)).is_err());
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(3)), Ok(true), "checksum hung or succeeded");
     }
 
     #[test]

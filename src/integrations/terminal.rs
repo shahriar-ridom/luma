@@ -55,20 +55,36 @@ fn dir_args(term: &str, dir: &Path) -> Vec<String> {
 
 pub fn open_in(dir: &Path, preferred: &str) -> Result<String, String> {
     let term = detect(preferred).ok_or("No terminal emulator found. Set $TERMINAL or install one.")?;
-    Command::new(&term)
-        .args(dir_args(&term, dir))
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| term.clone())
-        .map_err(|e| format!("Could not start {term}: {e}"))
+    let mut cmd = Command::new(&term);
+    cmd.args(dir_args(&term, dir)).current_dir(dir);
+    spawn_reaped(cmd).map(|_| term.clone()).map_err(|e| format!("Could not start {term}: {e}"))
+}
+
+/// Start `cmd` detached from our stdio and wait for it on a thread, so it does
+/// not stay a zombie after it exits. Returns the child's pid.
+fn spawn_reaped(mut cmd: Command) -> std::io::Result<u32> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closed_terminal_is_reaped() {
+        let pid = spawn_reaped(Command::new("true")).unwrap();
+        // `true` exits at once. Once reaped its /proc entry is gone; a zombie keeps it.
+        let gone = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            !Path::new(&format!("/proc/{pid}")).exists()
+        });
+        assert!(gone, "the child was left as a zombie");
+    }
 
     #[test]
     fn dir_args_per_emulator() {

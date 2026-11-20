@@ -134,7 +134,11 @@ impl Pane {
     /// True for exactly two selected regular files.
     pub fn can_compare(&self) -> bool {
         let infos = self.list.selected_infos();
-        infos.len() == 2 && infos.iter().all(|i| !filesystem::is_dir(i))
+        infos.len() == 2
+            && infos.iter().all(|i| {
+                // FIFOs, sockets and devices are `Special`; the core re-checks symlink targets.
+                !filesystem::is_dir(i) && matches!(i.file_type(), gio::FileType::Regular | gio::FileType::SymbolicLink)
+            })
     }
 
     pub fn compare(&self) {
@@ -279,7 +283,7 @@ impl Pane {
         if t.is_empty() {
             t.extend(self.cur_dir());
         }
-        crate::ui::dialogs::properties::show(&win, t, self.env.state.clone());
+        crate::ui::dialogs::properties::show(&win, t, self.env.state.clone(), self.env.ops.clone());
     }
 
     pub fn copy_path(&self) {

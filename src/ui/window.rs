@@ -708,7 +708,7 @@ impl WinCtl {
                         } else {
                             format!("{n} operations are still running. Closing now cancels them and may leave partly copied files behind.")
                         };
-                        if !dialogs::confirm(win.upcast_ref(), "Cancel running operations?", &body, "Cancel and Close", true).await {
+                        if !dialogs::confirm(&win, "Cancel running operations?", &body, "Cancel and Close", true).await {
                             return;
                         }
                         c.env.ops.cancel_all();
@@ -1319,6 +1319,12 @@ impl WinCtl {
             "close-tab" => {
                 if let Some(p) = self.tabs.selected_page() {
                     self.tabs.close_page(&p);
+                }
+            }
+            // Goes through the close request, so the "operations still running" guard applies.
+            "close" => {
+                if let Some(w) = self.win.upgrade() {
+                    w.close();
                 }
             }
             "reopen-tab" => {

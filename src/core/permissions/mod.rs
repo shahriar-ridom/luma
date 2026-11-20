@@ -64,9 +64,51 @@ pub fn folder_mode(mode: u32) -> u32 {
     mode | ((mode & 0o444) >> 2)
 }
 
+/// Mode for a file inside a recursively changed folder: like `chmod -R X`, an
+/// execute bit is kept only where the file already had one. A folder's `755`
+/// must not turn every document into a program.
+pub fn file_mode(new: u32, current: u32) -> u32 {
+    (new & !0o111) | (new & current & 0o111)
+}
+
+/// How many items [`apply`] would change for `root` and `scope` (symlinks are
+/// never counted: they are never touched).
+pub fn count(root: &Path, scope: Scope, cancel: &AtomicBool) -> u64 {
+    let Ok(md) = fs::symlink_metadata(root) else { return 0 };
+    if md.file_type().is_symlink() {
+        return 0;
+    }
+    if scope == Scope::ItemOnly || !md.is_dir() {
+        return 1;
+    }
+    let (dirs_change, files_change) =
+        (matches!(scope, Scope::All | Scope::FoldersOnly), matches!(scope, Scope::All | Scope::FilesOnly));
+    let mut n = u64::from(dirs_change); // the root folder itself
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            if cancel.load(Ordering::Relaxed) {
+                return n;
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                n += u64::from(dirs_change);
+                stack.push(e.path());
+            } else {
+                n += u64::from(files_change);
+            }
+        }
+    }
+    n
+}
+
 /// Apply `mode` to `root` and (per `scope`) to its descendants. Symlinks are
-/// never followed or changed. With a recursive scope, folders get
-/// [`folder_mode`] and are changed after everything inside them, so a mode
+/// never followed or changed. With a recursive scope, files get
+/// [`file_mode`] and folders get [`folder_mode`] and are changed after everything inside them, so a mode
 /// that removes access never stops the walk.
 pub fn apply(root: &Path, mode: u32, scope: Scope, cancel: &AtomicBool) -> ApplyReport {
     let mut rep = ApplyReport::default();
@@ -108,7 +150,11 @@ pub fn apply(root: &Path, mode: u32, scope: Scope, cancel: &AtomicBool) -> Apply
                 folders.push(p.clone());
                 stack.push(p);
             } else if files_change {
-                do_one(&p, mode, &mut rep);
+                // "All items" must not turn every document into a program; "Files only"
+                // is an explicit request for exactly this mode on the files.
+                let file =
+                    if scope == Scope::All { file_mode(mode, e.metadata().map_or(0, |m| m.mode())) } else { mode };
+                do_one(&p, file, &mut rep);
             }
         }
     }
@@ -169,12 +215,62 @@ mod tests {
         let c = AtomicBool::new(false);
         let rep = apply(&root.join("d"), 0o750, Scope::All, &c);
         assert!(rep.errors.is_empty());
-        assert_eq!(mode_of(&root.join("d/f")).unwrap(), 0o750);
+        assert_eq!(mode_of(&root.join("d/f")).unwrap(), 0o640, "a plain file does not become executable");
         assert_eq!(mode_of(&root.join("d/inner")).unwrap(), 0o750);
         assert_eq!(mode_of(&root.join("outside")).unwrap(), 0o600, "symlink target must be untouched");
         apply(&root.join("d"), 0o640, Scope::FilesOnly, &c);
         assert_eq!(mode_of(&root.join("d/f")).unwrap(), 0o640);
         assert_eq!(mode_of(&root.join("d")).unwrap(), 0o750);
+    }
+
+    #[test]
+    fn count_matches_what_apply_changes() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/perm-count");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("d/inner/deeper")).unwrap();
+        fs::write(root.join("d/a"), "x").unwrap();
+        fs::write(root.join("d/inner/b"), "x").unwrap();
+        std::os::unix::fs::symlink(root.join("d/a"), root.join("d/link")).unwrap();
+        std::os::unix::fs::symlink(root.join("d/inner"), root.join("d/dirlink")).unwrap();
+        let c = AtomicBool::new(false);
+        for scope in [Scope::ItemOnly, Scope::All, Scope::FoldersOnly, Scope::FilesOnly] {
+            let want = apply(&root.join("d"), 0o755, scope, &c).changed;
+            assert_eq!(count(&root.join("d"), scope, &c), want, "{scope:?}");
+        }
+        assert_eq!(count(&root.join("d"), Scope::All, &c), 5); // d, inner, deeper, a, b
+    }
+
+    #[test]
+    fn files_only_scope_applies_exactly_the_mode_asked_for() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/perm-files-only");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("d")).unwrap();
+        fs::write(root.join("d/run.sh"), "x").unwrap();
+        set_mode(&root.join("d/run.sh"), 0o600).unwrap();
+        apply(&root.join("d"), 0o755, Scope::FilesOnly, &AtomicBool::new(false));
+        assert_eq!(mode_of(&root.join("d/run.sh")).unwrap(), 0o755);
+    }
+
+    #[test]
+    fn recursive_modes_keep_files_non_executable() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/perm-x");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("d/inner")).unwrap();
+        fs::write(root.join("d/doc.txt"), "x").unwrap();
+        fs::write(root.join("d/inner/script.sh"), "x").unwrap();
+        set_mode(&root.join("d/doc.txt"), 0o600).unwrap();
+        set_mode(&root.join("d/inner/script.sh"), 0o700).unwrap();
+        let rep = apply(&root.join("d"), 0o755, Scope::All, &AtomicBool::new(false));
+        assert!(rep.errors.is_empty());
+        // Like `chmod -R u=rwX,go=rX`: only files that already had an execute bit keep one, and only for classes the new mode allows.
+        assert_eq!(mode_of(&root.join("d/doc.txt")).unwrap(), 0o644);
+        assert_eq!(mode_of(&root.join("d/inner/script.sh")).unwrap(), 0o744);
+        assert_eq!(mode_of(&root.join("d/inner")).unwrap(), 0o755);
+        assert_eq!(file_mode(0o755, 0o000), 0o644);
+        assert_eq!(file_mode(0o755, 0o770), 0o754);
+        // A single file given directly gets exactly the mode asked for.
+        apply(&root.join("d/doc.txt"), 0o755, Scope::ItemOnly, &AtomicBool::new(false));
+        assert_eq!(mode_of(&root.join("d/doc.txt")).unwrap(), 0o755);
     }
 
     #[test]
