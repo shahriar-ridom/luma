@@ -12,6 +12,7 @@ use std::{
     },
 };
 
+use crate::application::state::AppState;
 use crate::core::filesystem::human_size;
 use crate::core::metadata;
 use crate::services::{mounts, storage};
@@ -329,7 +330,7 @@ fn drives_page(parent: &gtk::Window, on_open: Rc<dyn Fn(PathBuf)>, dialog: &adw:
 }
 
 /// `folder` seeds the usage analysis; `on_open` navigates the active pane.
-pub fn show(parent: &gtk::Window, folder: PathBuf, on_open: Rc<dyn Fn(PathBuf)>) {
+pub fn show(parent: &gtk::Window, state: Rc<AppState>, folder: PathBuf, on_open: Rc<dyn Fn(PathBuf)>) {
     let stack = adw::ViewStack::new();
     let tv = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
@@ -340,6 +341,15 @@ pub fn show(parent: &gtk::Window, folder: PathBuf, on_open: Rc<dyn Fn(PathBuf)>)
     tv.add_top_bar(&header);
     tv.set_content(Some(&stack));
     let dialog = adw::Dialog::builder().title("Storage").content_width(720).content_height(580).child(&tv).build();
+
+    let manager = gtk::Button::with_label("Disk Manager…");
+    manager.set_tooltip_text(Some("Clean up space and check your disks"));
+    header.pack_start(&manager);
+    let (d, p) = (dialog.clone(), parent.clone());
+    manager.connect_clicked(move |_| {
+        d.close();
+        dialogs::disk_manager::show(&p, state.clone());
+    });
 
     let drives = drives_page(parent, on_open, &dialog);
     stack.add_titled_with_icon(

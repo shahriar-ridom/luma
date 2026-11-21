@@ -52,6 +52,7 @@ pub const ACTIONS: &[ActionDef] = &[
     a("toggle-sidebar", "Toggle sidebar", "F9"),
     a("connect-server", "Connect to server", "<Control>k"),
     a("storage", "Storage and disk usage", ""),
+    a("disk-manager", "Disk manager", ""),
     a("bookmark-add", "Add folder to Favorites", "<Control>d"),
     a("favorite-remove", "Remove folder from Favorites", ""),
     a("properties", "Properties", "<Alt>Return"),

@@ -162,6 +162,7 @@ pub fn build(state: &AppState) -> gio::Menu {
                 ("Add to Favorites", "bookmark-add"),
                 ("Connect to Server…", "connect-server"),
                 ("Storage & Disk Usage…", "storage"),
+                ("Disk Manager…", "disk-manager"),
             ],
         ),
     );

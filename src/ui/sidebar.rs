@@ -159,6 +159,23 @@ impl Sidebar {
         });
     }
 
+    /// Opens the Disk Manager's Health page, on the drive holding `dev` if known.
+    fn disk_manager_item(&self, dev: Option<String>) -> (String, Rc<dyn Fn()>) {
+        let w = self.me.clone();
+        (
+            "Disk Manager…".into(),
+            Rc::new(move || {
+                let Some(s) = w.upgrade() else { return };
+                let Some(win) = s.window() else { return };
+                dialogs::disk_manager::show_at(
+                    &win,
+                    s.state.clone(),
+                    dialogs::disk_manager::Start::Health(dev.clone()),
+                );
+            }),
+        )
+    }
+
     fn window(&self) -> Option<gtk::Window> {
         self.window.upgrade()
     }
@@ -415,7 +432,8 @@ impl Sidebar {
 
         // Devices.
         let (t, p) = path(PathBuf::from("/"));
-        self.add("Devices", crate::application::icons::themed("luma-drive-symbolic"), "Computer", t, p, None, vec![]);
+        let menu = vec![self.disk_manager_item(None)];
+        self.add("Devices", crate::application::icons::themed("luma-drive-symbolic"), "Computer", t, p, None, menu);
         let vm = gio::VolumeMonitor::get();
         let mut net_mounts = Vec::new();
         for m in vm.mounts().into_iter().filter(|m| !m.is_shadowed()) {
@@ -423,6 +441,8 @@ impl Sidebar {
             match root.path().filter(|_| root.has_uri_scheme("file")) {
                 Some(p) if p != Path::new("/") => {
                     let suffix = self.eject_widget(&m);
+                    let dev = m.volume().and_then(|v| v.identifier("unix-device")).map(|d| d.to_string());
+                    let menu = vec![self.disk_manager_item(dev)];
                     self.add(
                         "Devices",
                         crate::application::icons::themed("luma-removable-symbolic"),
@@ -430,7 +450,7 @@ impl Sidebar {
                         Target::Path(p.clone()),
                         Some(p),
                         suffix,
-                        vec![],
+                        menu,
                     );
                 }
                 Some(_) => {}
@@ -439,6 +459,7 @@ impl Sidebar {
         }
         for v in vm.volumes() {
             if v.get_mount().is_none() && v.can_mount() {
+                let menu = vec![self.disk_manager_item(v.identifier("unix-device").map(|d| d.to_string()))];
                 self.add(
                     "Devices",
                     crate::application::icons::themed("luma-removable-symbolic"),
@@ -446,7 +467,7 @@ impl Sidebar {
                     Target::Volume(v.clone()),
                     None,
                     None,
-                    vec![],
+                    menu,
                 );
             }
         }
