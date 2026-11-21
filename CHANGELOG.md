@@ -4,11 +4,7 @@ All notable changes are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [0.4.2] - 2026-11-20
-
-- TODO: describe this release.
-
-## [Unreleased]
+## [0.5.0] - 2026-11-21
 
 - Disk Manager (menu → Disk Manager…, the Storage dialog, or right-click a drive in the sidebar):
   - **Cleanup:** finds the Trash, application caches, thumbnails, old logs, the package cache, the system journal and crash dumps, plus large files and duplicates on request. Shows exactly what will happen before anything is removed, and how much space was really freed.
