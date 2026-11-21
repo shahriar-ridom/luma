@@ -10,6 +10,12 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+- Disk Manager (menu → Disk Manager…, the Storage dialog, or right-click a drive in the sidebar):
+  - **Cleanup:** finds the Trash, application caches, thumbnails, old logs, the package cache, the system journal and crash dumps, plus large files and duplicates on request. Shows exactly what will happen before anything is removed, and how much space was really freed.
+  - **Health:** reads each drive's SMART data (SATA and NVMe), starts short self-tests, and runs read-only filesystem checks (ext4, vfat, XFS) or a btrfs scrub.
+  - **Schedule:** optional unattended cleanup on a systemd user timer, running `luma --cleanup-run` (also usable by hand, with `--dry-run`). It only cleans the user-level things you tick.
+  - Administrator tasks use `pkexec`, only from a fixed list, and always show the exact command and ask first. Nothing is repaired.
+  - New optional packages: `smartmontools`, `polkit`, `btrfs-progs`, `xfsprogs`, `pacman-contrib`.
 - New app icon: frosted-glass folder with papers and the L mark.
 - Icon packs: Luma now uses the system's icon pack (including `~/.local/share/icons`) for UI glyphs, folders and file types, and falls back to its own icons where the pack has none. Pick a pack, or the built-in Luma icons, under Appearance → Icon Pack.
 - Higher contrast: stronger borders, selection and dimmed text across the UI. No blur or transparency was added.

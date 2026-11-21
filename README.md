@@ -63,15 +63,18 @@ Not sure which one? Use the package for your distribution; if there isn't one, u
 | `rclone` and `fuse3` | Google Drive as a normal folder |
 | `poppler-utils` | Page count and author for PDFs |
 | `ffmpeg` | Duration and resolution for videos |
+| `smartmontools` and `polkit` | Drive health and administrator cleanups in the Disk Manager |
+| `btrfs-progs`, `xfsprogs` | Scrubbing btrfs drives, checking XFS drives |
+| `pacman-contrib` (Arch) | Clearing the package cache |
 | GStreamer plug-ins (`gst-plugins-good`, `gst-libav`) | Playing audio and video in Quick Look |
 
 ```sh
 # Ubuntu / Debian
-sudo apt install git gvfs gvfs-fuse rclone fuse3 poppler-utils ffmpeg
+sudo apt install git gvfs gvfs-fuse rclone fuse3 poppler-utils ffmpeg smartmontools pkexec
 # Arch
-sudo pacman -S git gvfs rclone fuse3 poppler ffmpeg gst-plugins-good
+sudo pacman -S git gvfs rclone fuse3 poppler ffmpeg gst-plugins-good smartmontools polkit pacman-contrib
 # Fedora
-sudo dnf install git gvfs gvfs-fuse rclone fuse3 poppler-utils
+sudo dnf install git gvfs gvfs-fuse rclone fuse3 poppler-utils smartmontools polkit
 ```
 </details>
 
@@ -186,6 +189,14 @@ Tick **Remember this server** and it appears in the sidebar for one-click reconn
 ### USB drives and disks
 
 Plugged-in drives appear under **Devices** automatically. Click an unmounted one to mount it, use the eject button to remove it safely. For capacity bars and a "what's using my space?" view, open *⋯ menu → **Storage & Disk Usage…***.
+
+### Disk Manager
+
+Open *⋯ menu → **Disk Manager…***, or right-click a drive in the sidebar.
+
+- **Cleanup:** press **Scan** to see what can be freed: the Trash, application caches, thumbnails, old logs, and (with `polkit`) the package cache, system journal and crash dumps. Tick **Include large files and duplicates** for a slower search of your home folder; those go to the Trash. Unused packages are only listed with a command you can copy. **Review and Clean…** shows exactly what will happen before anything is removed.
+- **Health:** each drive's SMART report, a short self-test, and read-only checks of its filesystems. Reading a drive needs administrator permission (`smartmontools` and `polkit`). Luma shows the exact command and asks every time. It never repairs anything; a drive that must be mounted or unmounted to be checked says so.
+- **Schedule:** turn on **Clean up automatically** to run a cleanup daily, weekly or monthly in the background, even when Luma is closed. It only cleans what you tick, never asks for administrator rights, and keeps anything changed in the last day. **Preview a Run** shows what it would remove right now. You can also run `luma --cleanup-run --dry-run` in a terminal. Turn the switch off to remove the timer.
 
 ## Make it yours
 

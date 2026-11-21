@@ -35,7 +35,10 @@ src/
 │   ├── navigation/     history
 │   ├── operations/     copy/move/trash/delete engine, rename, trash lookup, undo
 │   ├── search/  duplicates/  compare/  permissions/  metadata/
-├── services/       archive (bsdtar), thumbnails, mounts, storage info
+│   └── diskmgr/        cleanup providers, safety policy, SMART and fs-check parsers,
+│                       root-action allow-list, schedule config and unit text, headless run
+├── services/       archive (bsdtar), thumbnails, mounts, storage info,
+│                   diskmgr (worker threads, pkexec runner), cleanup_schedule (systemd user timer)
 ├── integrations/   git, network (GVfs), cloud (rclone), terminal, plugins
 ├── database/       SQLite schema, migrations, repository
 ├── settings/       preferences and their persistence
@@ -130,6 +133,7 @@ Implemented: the whole of phases 1–7 of `SPEC.md` except the items below.
 | List columns for created date, permissions, owner and group; configurable columns; expandable folder sizes | shown in Properties instead |
 | Selecting by pattern, extension or type; invert selection | |
 | Column-view sort order, column widths and context menu | |
+| Disk Manager: kernel and orphan removal | shown as a command to copy; Luma never runs it |
 | Persistent operation history | the undo list is in memory (the `operation_history` table is not created) |
 | Saved searches beyond the history of queries | |
 | Desktop-environment-specific theming | the app follows libadwaita |

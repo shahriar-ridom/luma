@@ -31,6 +31,10 @@ Recommends:     gvfs-fuse
 Suggests:       rclone
 Suggests:       fuse3
 Suggests:       poppler-utils
+Recommends:     smartmontools
+Recommends:     polkit
+Suggests:       btrfs-progs
+Suggests:       xfsprogs
 
 %description
 Luma pairs a calm, Finder-like interface with the depth of a power-user

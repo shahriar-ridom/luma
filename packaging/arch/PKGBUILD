@@ -18,7 +18,12 @@ optdepends=('git: repository status and actions'
             'fuse3: Google Drive mounts'
             'poppler: PDF details'
             'ffmpeg: video details'
-            'gst-plugins-good: audio and video playback in Quick Look')
+            'gst-plugins-good: audio and video playback in Quick Look'
+            'smartmontools: drive health in the Disk Manager'
+            'polkit: administrator tasks in the Disk Manager (asks first)'
+            'pacman-contrib: clearing the package cache (paccache)'
+            'btrfs-progs: scrubbing btrfs drives'
+            'xfsprogs: checking XFS drives')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
