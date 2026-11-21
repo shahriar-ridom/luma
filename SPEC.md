@@ -390,6 +390,20 @@ Features:
 - Device information.
 - Filesystem type detection.
 
+### Disk Manager
+
+A dialog with three pages. Nothing is removed without a review that lists exactly what will happen, and the review is the plan that is then carried out.
+
+- **Cleanup:** detects the distribution and package manager, then suggests what can be freed: Trash, application caches, thumbnails, old logs, the package cache, the system journal, crash dumps, and (opt-in, slower) large files and duplicates. Files the user owns go to the Trash; unused packages and old kernels are advice only, shown as a command to copy. Reports the space actually freed.
+- **Health:** per-drive SMART status (temperature, power-on time, reallocated and pending sectors, NVMe wear and media errors, last self-test), short self-tests, and read-only filesystem checks (`fsck -n`, `xfs_repair -n`, btrfs scrub). Tools that are not installed hide what needs them and are named in the empty state.
+- **Schedule:** unattended cleanup on a systemd user timer that runs `luma --cleanup-run`. Only user-level providers the user ticked; never administrator tasks.
+
+Safety rules:
+
+- Only allow-listed folders are touched; links are never followed; anything changed in the last 24 hours is kept.
+- Administrator tasks are a closed list of fixed commands run through `pkexec`, each confirmed every time with the exact command shown, never scheduled and never silent (see 6.5). Device checks never repair.
+- The timer's unit files are marked as Luma's; a unit with the same name made by someone else is never overwritten or removed.
+
 ## 6.5 Permissions
 
 Display and manage:
@@ -402,7 +416,7 @@ Display and manage:
 - Special permission bits.
 - Recursive permission changes.
 
-Respect Linux security boundaries. Do not silently escalate privileges.
+Respect Linux security boundaries. Do not silently escalate privileges. The Disk Manager is the one place that asks for administrator rights, only through `pkexec`, only for a fixed list of commands, and only after showing the command.
 
 ## 6.6 Terminal Integration
 

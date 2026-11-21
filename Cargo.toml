@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A fast, native GTK4/libadwaita file manager for Linux"
@@ -22,6 +22,7 @@ nix = { version = "0.31.3", features = ["user", "fs", "process"] }
 regex = "1.13.1"
 rusqlite = "0.41.1"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 shell-words = "1.1.1"
 similar = "3.2.1"
 thiserror = "2.0.21"
@@ -47,7 +48,7 @@ A fast, native file manager for Linux with grid, list, column and gallery \
 views, tabs and split view, Quick Look, archives, search, tags, Git status, \
 Google Drive and network locations, undo, plugins and custom actions."""
 depends = "$auto, libsqlite3-0, libgtk-4-1 (>= 4.12), libadwaita-1-0 (>= 1.5), libarchive-tools, shared-mime-info"
-recommends = "gvfs, gvfs-fuse, git, rclone, fuse3, poppler-utils, ffmpeg"
+recommends = "gvfs, gvfs-fuse, git, rclone, fuse3, poppler-utils, ffmpeg, smartmontools, pkexec, btrfs-progs, xfsprogs"
 assets = [
     ["target/release/luma", "usr/bin/", "755"],
     ["data/dev.ridom.Luma.desktop", "usr/share/applications/", "644"],

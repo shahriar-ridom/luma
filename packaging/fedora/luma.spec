@@ -4,7 +4,7 @@
 %global debug_package %{nil}
 
 Name:           luma
-Version:        0.4.2
+Version:        0.5.0
 Release:        1%{?dist}
 Summary:        A fast, native GTK4/libadwaita file manager
 License:        GPL-3.0-only
@@ -31,6 +31,10 @@ Recommends:     gvfs-fuse
 Suggests:       rclone
 Suggests:       fuse3
 Suggests:       poppler-utils
+Recommends:     smartmontools
+Recommends:     polkit
+Suggests:       btrfs-progs
+Suggests:       xfsprogs
 
 %description
 Luma pairs a calm, Finder-like interface with the depth of a power-user

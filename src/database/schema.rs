@@ -58,4 +58,12 @@ pub const MIGRATIONS: &[&str] = &[
         wait     INTEGER NOT NULL DEFAULT 0,
         position INTEGER NOT NULL DEFAULT 0
      );",
+    // v6
+    "CREATE TABLE cleanup_history (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts      INTEGER NOT NULL,
+        source  TEXT NOT NULL,
+        freed   INTEGER NOT NULL,
+        summary TEXT NOT NULL
+     );",
 ];

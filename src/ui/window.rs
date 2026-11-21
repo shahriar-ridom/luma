@@ -314,6 +314,7 @@ impl WinCtl {
         let s2 = gio::Menu::new();
         s2.append(Some("Connect to Server…"), Some("win.connect-server"));
         s2.append(Some("Storage & Disk Usage…"), Some("win.storage"));
+        s2.append(Some("Disk Manager…"), Some("win.disk-manager"));
         s2.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
         s2.append(Some("About"), Some("win.about"));
         main_menu.append_section(None, &s2);
@@ -1411,11 +1412,17 @@ impl WinCtl {
                     crate::ui::dialogs::extensions::show(win.upcast_ref(), self.state.clone(), Rc::new(|| {}));
                 }
             }
+            "disk-manager" => {
+                if let Some(win) = self.win.upgrade() {
+                    crate::ui::dialogs::disk_manager::show(win.upcast_ref(), self.state.clone());
+                }
+            }
             "storage" => {
                 if let Some(win) = self.win.upgrade() {
                     let w = Rc::downgrade(self);
                     crate::ui::dialogs::storage::show(
                         win.upcast_ref(),
+                        self.state.clone(),
                         cur.unwrap_or_else(glib::home_dir),
                         Rc::new(move |p| {
                             if let Some(pane) = w.upgrade().and_then(|c| c.active_pane()) {

@@ -1,4 +1,5 @@
 pub mod compare;
+pub mod diskmgr;
 pub mod duplicates;
 pub mod filesystem;
 pub mod metadata;

@@ -37,6 +37,19 @@ pub struct CustomActionRow {
     pub wait: bool,
 }
 
+/// One finished cleanup, from the Disk Manager or a scheduled run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CleanupRun {
+    /// Milliseconds since the epoch.
+    pub ts: i64,
+    /// `manual` or `scheduled`.
+    pub source: String,
+    pub freed: i64,
+    pub summary: String,
+}
+
+/// Runs kept; older ones are dropped on insert.
+const MAX_CLEANUP_RUNS: i64 = 100;
 const MAX_RECENT_FILES: i64 = 200;
 const MAX_RECENT_LOCATIONS: i64 = 200;
 
@@ -376,6 +389,53 @@ impl Database {
         self.conn.execute("DELETE FROM user_preferences WHERE key = ?1", [key])?;
         Ok(())
     }
+
+    // ---- cleanup history -------------------------------------------------
+
+    pub fn add_cleanup_run(&self, source: &str, freed: i64, summary: &str) -> Result<()> {
+        self.add_cleanup_run_at(now_ms(), source, freed, summary)
+    }
+
+    fn add_cleanup_run_at(&self, ts: i64, source: &str, freed: i64, summary: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO cleanup_history (ts, source, freed, summary) VALUES (?1, ?2, ?3, ?4)",
+            params![ts, source, freed, summary],
+        )?;
+        self.conn.execute(
+            "DELETE FROM cleanup_history WHERE id NOT IN
+             (SELECT id FROM cleanup_history ORDER BY id DESC LIMIT ?1)",
+            [MAX_CLEANUP_RUNS],
+        )?;
+        Ok(())
+    }
+
+    /// Add runs recorded by the unattended `--cleanup-run`, oldest first. Only
+    /// runs newer than the last one already imported are added, so importing
+    /// the same file again changes nothing and old runs that were pruned do
+    /// not come back. Returns how many were added.
+    pub fn import_scheduled_runs(&self, runs: &[(i64, i64, String)]) -> Result<usize> {
+        let seen: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(ts), 0) FROM cleanup_history WHERE source = 'scheduled'",
+            [],
+            |r| r.get(0),
+        )?;
+        let mut fresh: Vec<_> = runs.iter().filter(|(ts, ..)| *ts > seen).collect();
+        fresh.sort_by_key(|(ts, ..)| *ts);
+        for (ts, freed, summary) in &fresh {
+            self.add_cleanup_run_at(*ts, "scheduled", *freed, summary)?;
+        }
+        Ok(fresh.len())
+    }
+
+    /// Newest first.
+    pub fn cleanup_runs(&self, limit: usize) -> Result<Vec<CleanupRun>> {
+        let mut st =
+            self.conn.prepare("SELECT ts, source, freed, summary FROM cleanup_history ORDER BY id DESC LIMIT ?1")?;
+        let rows = st.query_map([limit as i64], |r| {
+            Ok(CleanupRun { ts: r.get(0)?, source: r.get(1)?, freed: r.get(2)?, summary: r.get(3)? })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
 }
 
 #[cfg(test)]
@@ -384,6 +444,39 @@ mod tests {
 
     fn db() -> Database {
         Database::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn cleanup_history_is_newest_first_and_bounded() {
+        let db = db();
+        assert!(db.cleanup_runs(5).unwrap().is_empty());
+        for i in 0..(MAX_CLEANUP_RUNS + 5) {
+            db.add_cleanup_run("manual", i, &format!("run {i}")).unwrap();
+        }
+        let all = db.cleanup_runs(1000).unwrap();
+        assert_eq!(all.len() as i64, MAX_CLEANUP_RUNS);
+        assert_eq!(all[0].summary, format!("run {}", MAX_CLEANUP_RUNS + 4));
+        assert_eq!(all[0].freed, MAX_CLEANUP_RUNS + 4);
+        assert_eq!(db.cleanup_runs(3).unwrap().len(), 3);
+        assert_eq!(all[0].source, "manual");
+    }
+
+    #[test]
+    fn scheduled_runs_import_once() {
+        let db = db();
+        let runs = vec![(2000, 20, "b".to_string()), (1000, 10, "a".to_string())];
+        assert_eq!(db.import_scheduled_runs(&runs).unwrap(), 2);
+        assert_eq!(db.import_scheduled_runs(&runs).unwrap(), 0, "importing again adds nothing");
+        let all = db.cleanup_runs(10).unwrap();
+        assert_eq!(
+            all.iter().map(|r| (r.ts, r.source.as_str())).collect::<Vec<_>>(),
+            [(2000, "scheduled"), (1000, "scheduled")]
+        );
+        // A newer run is added; a manual run does not move the mark.
+        db.add_cleanup_run("manual", 5, "m").unwrap();
+        let more = vec![(1000, 10, "a".to_string()), (3000, 30, "c".to_string())];
+        assert_eq!(db.import_scheduled_runs(&more).unwrap(), 1);
+        assert_eq!(db.cleanup_runs(10).unwrap().len(), 4);
     }
 
     #[test]
