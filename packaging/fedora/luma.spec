@@ -4,7 +4,7 @@
 %global debug_package %{nil}
 
 Name:           luma
-Version:        0.5.0
+Version:        0.5.1
 Release:        1%{?dist}
 Summary:        A fast, native GTK4/libadwaita file manager
 License:        GPL-3.0-only
@@ -18,6 +18,7 @@ BuildRequires:  make
 BuildRequires:  pkgconfig(gtk4) >= 4.12
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 BuildRequires:  pkgconfig(sqlite3)
+BuildRequires:  pkgconfig(gstreamer-1.0)
 BuildRequires:  desktop-file-utils
 BuildRequires:  libappstream-glib
 
@@ -25,6 +26,7 @@ Requires:       gtk4 >= 4.12
 Requires:       libadwaita >= 1.5
 Requires:       bsdtar
 Requires:       shared-mime-info
+Requires:       gstreamer1-plugins-base
 Recommends:     git
 Recommends:     gvfs
 Recommends:     gvfs-fuse

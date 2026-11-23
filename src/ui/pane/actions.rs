@@ -490,12 +490,27 @@ impl Pane {
     /// Development aids for screenshots: `FM_SELECT=name` selects an item and
     /// `FM_MENU=item|bg` opens a context menu once the first folder has loaded.
     pub(super) fn debug_hooks(self: &Rc<Self>) {
-        thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        thread_local! {
+            static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+            static SELECTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        // Every pane tries until one holds the item (restored tabs load first),
+        // a moment after loading since the first batch can precede the rest.
+        if let Ok(n) = std::env::var("FM_SELECT")
+            && !SELECTED.get()
+        {
+            let w = self.me.clone();
+            glib::timeout_add_local_once(Duration::from_millis(400), move || {
+                if let Some(p) = w.upgrade()
+                    && !SELECTED.get()
+                    && p.list.select_name(&n).is_some()
+                {
+                    SELECTED.set(true);
+                }
+            });
+        }
         if DONE.replace(true) {
             return;
-        }
-        if let Ok(n) = std::env::var("FM_SELECT") {
-            self.select_visible(&n);
         }
         if let Ok(kind) = std::env::var("FM_MENU") {
             let w = self.me.clone();

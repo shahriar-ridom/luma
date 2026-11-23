@@ -1,0 +1,122 @@
+/* ── Luma · Frost — light palette ─────────────────────────────────────────
+   A pale wash with a peach glow and an accent glow; translucent white glass.
+   Loaded before style.css (see application/theme.rs); theme-dark.css
+   defines the same names.
+
+   The accent is the system's: every accent token derives from libadwaita's
+   @accent_bg_color and @accent_fg_color, which this file must never
+   redefine. Do not name accent_color: libadwaita builds it with relative
+   colour syntax, which resolves to black when named from this provider.
+   accent_text darkens the accent instead, which keeps it above 4.5:1 on
+   the tint for libadwaita's accents (yellow, the lightest, is 5:1).
+   Contrast on the sheet: ink 14:1, ink_2 8:1, ink_3 4.8:1.                */
+
+/* Text */
+@define-color ink          #1c1e2b;
+@define-color ink_2        #4a4d60;
+@define-color ink_3        #666979;
+
+/* Accent (system) */
+@define-color accent       @accent_bg_color;
+@define-color accent_hi    shade(@accent_bg_color, 1.1);
+@define-color accent_lo    shade(@accent_bg_color, 0.88);
+@define-color accent_text  shade(@accent_bg_color, 0.7);
+@define-color on_accent    @accent_fg_color;
+@define-color tint         mix(#ffffff, @accent_bg_color, 0.16);
+@define-color tint_hi      mix(#ffffff, @accent_bg_color, 0.23);
+@define-color hover_tint   alpha(@accent_bg_color, 0.07);
+@define-color select_tint  alpha(@accent_bg_color, 0.15);
+@define-color select_hover alpha(@accent_bg_color, 0.21);
+@define-color select_edge  alpha(@accent_bg_color, 0.20);
+
+/* Surfaces: neutral with a faint cast of the accent, so any accent sits in. */
+@define-color wash         mix(#efeef4, @accent_bg_color, 0.05);
+@define-color rim          rgba(255, 255, 255, 0.85);
+@define-color line         alpha(@ink, 0.10);
+@define-color glass        rgba(255, 255, 255, 0.55);
+@define-color sheet_top    rgba(255, 255, 255, 0.70);
+@define-color sheet_bottom rgba(255, 255, 255, 0.38);
+@define-color sheet_solid  mix(#fbfbfd, @accent_bg_color, 0.02);
+@define-color chrome       rgba(255, 255, 255, 0.40);
+@define-color raised       rgba(255, 255, 255, 0.62);
+@define-color raised_hover rgba(255, 255, 255, 0.92);
+@define-color seg_on       rgba(255, 255, 255, 0.95);
+@define-color pressed      mix(#ffffff, @accent_bg_color, 0.13);
+@define-color field        rgba(255, 255, 255, 0.70);
+@define-color field_focus  #ffffff;
+@define-color track        alpha(@ink, 0.07);
+@define-color trough       alpha(@ink, 0.12);
+@define-color control_off  alpha(@ink, 0.17);
+@define-color check_bg     rgba(255, 255, 255, 0.80);
+@define-color check_edge   alpha(@ink, 0.28);
+@define-color knob         #ffffff;
+@define-color scroll       alpha(@ink, 0.25);
+@define-color scroll_hover alpha(@ink, 0.42);
+@define-color plate        rgba(250, 250, 253, 0.96);
+@define-color tip_bg       rgba(28, 30, 43, 0.94);
+@define-color tip_fg       #f4f4f8;
+@define-color tip_edge     transparent;
+@define-color shadow       mix(#3c3b52, @accent_bg_color, 0.3);
+@define-color empty_icon   alpha(@ink_2, 0.55);
+
+/* Quick Look and the audio player: a near-opaque surface (blur behind it is
+   the compositor's), a floating bar, and a veil over blurred artwork. */
+@define-color ql_bg        rgba(248, 248, 251, 0.97);
+@define-color ql_bar       rgba(255, 255, 255, 0.80);
+@define-color media_veil   rgba(255, 255, 255, 0.42);
+@define-color play_bg      @ink;
+@define-color play_fg      #ffffff;
+
+/* States (text colours pass 4.5:1 on glass; *_fill are for bars and rings) */
+@define-color error_ring   #e0594f;
+@define-color ok_fill      #1f9d5c;
+@define-color warn_fill    #e0a233;
+@define-color bad_fill     #d23c32;
+@define-color usage_fill   mix(#ffffff, @accent_bg_color, 0.55);
+
+/* libadwaita (the accent colours are left to libadwaita) */
+@define-color window_bg_color @wash;
+@define-color window_fg_color @ink;
+@define-color view_bg_color   mix(#fafafc, @accent_bg_color, 0.02);
+@define-color view_fg_color   @ink;
+@define-color headerbar_bg_color @chrome;
+@define-color headerbar_fg_color @ink;
+@define-color headerbar_border_color @line;
+@define-color headerbar_backdrop_color @chrome;
+@define-color headerbar_shade_color transparent;
+@define-color sidebar_bg_color @chrome;
+@define-color sidebar_fg_color @ink;
+@define-color sidebar_backdrop_color @chrome;
+@define-color sidebar_border_color @line;
+@define-color sidebar_shade_color transparent;
+@define-color secondary_sidebar_bg_color @chrome;
+@define-color card_bg_color   rgba(255, 255, 255, 0.6);
+@define-color card_fg_color   @ink;
+@define-color card_shade_color transparent;
+@define-color dialog_bg_color mix(#f4f4f8, @accent_bg_color, 0.03);
+@define-color dialog_fg_color @ink;
+@define-color popover_bg_color #fafafd;
+@define-color popover_fg_color @ink;
+@define-color popover_shade_color transparent;
+@define-color thumbnail_bg_color mix(#e9e9f0, @accent_bg_color, 0.04);
+@define-color destructive_bg_color #d23c32;
+@define-color destructive_fg_color #ffffff;
+@define-color destructive_color    #b02a21;
+@define-color error_bg_color  #d23c32;
+@define-color error_fg_color  #ffffff;
+@define-color error_color     #b02a21;
+@define-color warning_color   #8f5a00;
+@define-color success_color   #17703f;
+
+/* Backdrop: a peach glow, an accent glow, and the accent again below. */
+window.fm-window {
+  background-image:
+    radial-gradient(ellipse at 88% 0%, rgba(255, 224, 190, 0.6) 0%, rgba(255, 224, 190, 0) 46%),
+    radial-gradient(ellipse at 8% 12%, alpha(@accent_bg_color, 0.20) 0%, alpha(@accent_bg_color, 0) 52%),
+    radial-gradient(ellipse at 70% 105%, alpha(@accent_bg_color, 0.16) 0%, alpha(@accent_bg_color, 0) 55%),
+    linear-gradient(to bottom, mix(#f4f3f8, @accent_bg_color, 0.04), mix(#eae9f1, @accent_bg_color, 0.05));
+}
+
+/* The folder and file glyphs are pale duotone art: darken them to a slate so they read on glass. */
+columnview.fm-list row image:not(.fm-thumb), gridview.fm-grid image:not(.fm-thumb), listview.fm-miller row image, listview.fm-strip image:not(.fm-thumb), image.fm-ql-icon { filter: brightness(0.52) saturate(2.2) contrast(1.1); }
+columnview.fm-list row:selected image:not(.fm-thumb), gridview.fm-grid > child:selected image:not(.fm-thumb) { filter: brightness(0.42) saturate(2.6) contrast(1.1); }

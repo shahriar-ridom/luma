@@ -1,0 +1,118 @@
+/* ── Luma · Frost — dark palette ──────────────────────────────────────────
+   Graphite glass. Surfaces stay near-neutral with a faint cast of the
+   system accent, and step up in lightness with elevation:
+     backdrop (darkest) → sidebar and header → sheet → popovers and island.
+   Hairlines are light, shadows are black, and the accent is used for state
+   only. Same names as theme-light.css; the accent comes from libadwaita
+   (see the note there on accent_color). accent_text lightens the accent
+   halfway to white, which reads above 6:1 on the tint for every accent.
+   Contrast on the sheet: ink 14:1, ink_2 8.5:1, ink_3 5.3:1.               */
+
+/* Text */
+@define-color ink          #eeeef3;
+@define-color ink_2        #b8bac6;
+@define-color ink_3        #9295a3;
+
+/* Accent (system) */
+@define-color accent       @accent_bg_color;
+@define-color accent_hi    shade(@accent_bg_color, 1.1);
+@define-color accent_lo    shade(@accent_bg_color, 0.88);
+@define-color accent_text  mix(@accent_bg_color, #ffffff, 0.5);
+@define-color on_accent    @accent_fg_color;
+@define-color tint         mix(#24252c, @accent_bg_color, 0.30);
+@define-color tint_hi      mix(#24252c, @accent_bg_color, 0.38);
+@define-color hover_tint   rgba(255, 255, 255, 0.06);
+@define-color select_tint  alpha(@accent_bg_color, 0.26);
+@define-color select_hover alpha(@accent_bg_color, 0.32);
+@define-color select_edge  alpha(@accent_bg_color, 0.50);
+
+/* Surfaces */
+@define-color wash         mix(#121317, @accent_bg_color, 0.03);
+@define-color rim          rgba(255, 255, 255, 0.07);
+@define-color line         rgba(255, 255, 255, 0.08);
+@define-color glass        alpha(mix(#1f2026, @accent_bg_color, 0.04), 0.90);
+@define-color sheet_top    rgba(255, 255, 255, 0.045);
+@define-color sheet_bottom rgba(255, 255, 255, 0.01);
+@define-color sheet_solid  mix(#26272d, @accent_bg_color, 0.04);
+@define-color chrome       rgba(255, 255, 255, 0.03);
+@define-color raised       rgba(255, 255, 255, 0.07);
+@define-color raised_hover rgba(255, 255, 255, 0.11);
+@define-color seg_on       mix(#393a44, @accent_bg_color, 0.08);
+@define-color pressed      alpha(@accent_bg_color, 0.22);
+@define-color field        rgba(0, 0, 0, 0.22);
+@define-color field_focus  rgba(0, 0, 0, 0.30);
+@define-color track        rgba(0, 0, 0, 0.22);
+@define-color trough       rgba(255, 255, 255, 0.09);
+@define-color control_off  rgba(255, 255, 255, 0.15);
+@define-color check_bg     rgba(255, 255, 255, 0.05);
+@define-color check_edge   rgba(255, 255, 255, 0.30);
+@define-color knob         #f4f4f8;
+@define-color scroll       rgba(255, 255, 255, 0.22);
+@define-color scroll_hover rgba(255, 255, 255, 0.40);
+@define-color plate        alpha(mix(#2a2b33, @accent_bg_color, 0.04), 0.98);
+@define-color tip_bg       #2e2f37;
+@define-color tip_fg       #eeeef3;
+@define-color tip_edge     rgba(255, 255, 255, 0.10);
+@define-color shadow       #000000;
+@define-color empty_icon   alpha(@ink_2, 0.40);
+
+/* Quick Look and the audio player */
+@define-color ql_bg        alpha(mix(#1a1b20, @accent_bg_color, 0.03), 0.97);
+@define-color ql_bar       rgba(44, 45, 53, 0.82);
+@define-color media_veil   rgba(12, 12, 16, 0.36);
+@define-color play_bg      @ink;
+@define-color play_fg      #16171c;
+
+/* States */
+@define-color error_ring   #ff6b61;
+@define-color ok_fill      #3cc27a;
+@define-color warn_fill    #f2b84b;
+@define-color bad_fill     #ff6b61;
+@define-color usage_fill   mix(#9a9cab, @accent_bg_color, 0.5);
+
+/* libadwaita (the accent colours are left to libadwaita) */
+@define-color window_bg_color @wash;
+@define-color window_fg_color @ink;
+@define-color view_bg_color   mix(#1d1e23, @accent_bg_color, 0.03);
+@define-color view_fg_color   @ink;
+@define-color headerbar_bg_color @chrome;
+@define-color headerbar_fg_color @ink;
+@define-color headerbar_border_color @line;
+@define-color headerbar_backdrop_color @chrome;
+@define-color headerbar_shade_color transparent;
+@define-color sidebar_bg_color @chrome;
+@define-color sidebar_fg_color @ink;
+@define-color sidebar_backdrop_color @chrome;
+@define-color sidebar_border_color @line;
+@define-color sidebar_shade_color transparent;
+@define-color secondary_sidebar_bg_color @chrome;
+@define-color card_bg_color   rgba(255, 255, 255, 0.05);
+@define-color card_fg_color   @ink;
+@define-color card_shade_color transparent;
+@define-color dialog_bg_color mix(#202127, @accent_bg_color, 0.03);
+@define-color dialog_fg_color @ink;
+@define-color popover_bg_color mix(#2a2b33, @accent_bg_color, 0.04);
+@define-color popover_fg_color @ink;
+@define-color popover_shade_color transparent;
+@define-color thumbnail_bg_color #2b2c33;
+@define-color destructive_bg_color #c9382f;
+@define-color destructive_fg_color #ffffff;
+@define-color destructive_color    #ff8a80;
+@define-color error_bg_color  #c9382f;
+@define-color error_fg_color  #ffffff;
+@define-color error_color     #ff8a80;
+@define-color warning_color   #f2b84b;
+@define-color success_color   #5fd394;
+
+/* Backdrop: a quiet accent glow top-left, a dim ember top-right, the accent below. */
+window.fm-window {
+  background-image:
+    radial-gradient(ellipse at 88% 0%, rgba(255, 160, 110, 0.06) 0%, rgba(255, 160, 110, 0) 46%),
+    radial-gradient(ellipse at 8% 12%, alpha(@accent_bg_color, 0.16) 0%, alpha(@accent_bg_color, 0) 52%),
+    radial-gradient(ellipse at 70% 105%, alpha(@accent_bg_color, 0.10) 0%, alpha(@accent_bg_color, 0) 55%),
+    linear-gradient(to bottom, mix(#17181d, @accent_bg_color, 0.04), mix(#0f1013, @accent_bg_color, 0.02));
+}
+
+/* The duotone glyphs are pale already: lift them slightly, keep their colour. */
+columnview.fm-list row image:not(.fm-thumb), gridview.fm-grid image:not(.fm-thumb), listview.fm-miller row image, listview.fm-strip image:not(.fm-thumb), image.fm-ql-icon { filter: brightness(1.02) saturate(1.15); }
+columnview.fm-list row:selected image:not(.fm-thumb), gridview.fm-grid > child:selected image:not(.fm-thumb) { filter: brightness(1.15) saturate(1.3); }

@@ -283,6 +283,8 @@ fn wrap_label() -> gtk::Label {
 
 fn action_button(label: &str, action: &str) -> gtk::Button {
     let b = gtk::Button::with_label(label);
+    // `flat` keeps the generic raised-button rule off it; .fm-island-action styles it.
+    b.add_css_class("flat");
     b.add_css_class("fm-island-action");
     b.set_action_name(Some(action));
     b.set_valign(gtk::Align::Center);
@@ -811,6 +813,7 @@ impl Island {
         let id = op.id;
         if let Some(Action { label, run }) = action {
             let b = gtk::Button::with_label(&label);
+            b.add_css_class("flat");
             b.add_css_class("fm-island-action");
             b.set_valign(gtk::Align::Center);
             let w = self.me.clone();

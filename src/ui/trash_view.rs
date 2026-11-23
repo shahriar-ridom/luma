@@ -177,6 +177,8 @@ impl TrashView {
         summary.set_ellipsize(gtk::pango::EllipsizeMode::End);
         summary.add_css_class("fm-trash-note");
         let empty_btn = gtk::Button::with_label("Empty Trash");
+        // `flat` keeps the generic raised-button rule off it; .fm-trash-empty styles it.
+        empty_btn.add_css_class("flat");
         empty_btn.add_css_class("fm-trash-empty");
         empty_btn.set_action_name(Some("trash.empty"));
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
