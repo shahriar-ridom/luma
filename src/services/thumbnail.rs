@@ -206,6 +206,22 @@ fn to_texture((bytes, w, h, stride, alpha): Decoded) -> gdk::Texture {
     gdk::MemoryTexture::new(w, h, fmt, &glib::Bytes::from_owned(bytes), stride).upcast()
 }
 
+/// Decode an encoded picture held in memory (e.g. embedded cover art) off the
+/// main thread, scaled to fit `size`.
+pub async fn texture_from_bytes(bytes: Vec<u8>, size: i32) -> Option<gdk::Texture> {
+    let d = gio::spawn_blocking(move || {
+        let stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from_owned(bytes));
+        let pb = gdk_pixbuf::Pixbuf::from_stream_at_scale(&stream, size, size, true, None::<&gio::Cancellable>).ok()?;
+        if pb.width() as u64 * pb.height() as u64 > MAX_PIXELS {
+            return None;
+        }
+        Some((pb.read_pixel_bytes().to_vec(), pb.width(), pb.height(), pb.rowstride() as usize, pb.has_alpha()))
+    })
+    .await
+    .ok()??;
+    Some(to_texture(d))
+}
+
 /// Decode `path` off the main thread, scaled to fit `size`. Also returns the
 /// original pixel dimensions. Used by the preview panel and gallery.
 pub async fn load_texture(path: String, size: i32) -> Option<(gdk::Texture, (i32, i32))> {

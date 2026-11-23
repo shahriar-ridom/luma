@@ -4,6 +4,19 @@ All notable changes are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- **Fixed:** previewing an MP3 could crash Luma (in Quick Look, the preview panel and the gallery). GTK's media backend plays through GStreamer's `playbin3`, whose decodebin3 aborts on MP3 streams when they are seeked or restarted (GStreamer 1.28). Audio now plays on Luma's own `playbin` pipeline, which never reaches that code.
+- Quick Look redesign: bezel-less, the window takes the shape of its content.
+  - Images fill the window over a blurred copy of themselves; videos play edge to edge, sized to their aspect ratio (F or a double-click for full screen).
+  - Audio opens a compact player with the cover art, title, artist, a seek bar and ±10 s skips. The same player is used in the preview panel and the gallery.
+  - Documents read in a centred column; everything else shows a card with its icon or thumbnail, kind, size and date.
+  - Archives (ZIP, TAR and its compressed forms, 7z, RAR, ISO, …) show their contents as a tree with file and folder sizes and totals, read with bsdtar without extracting anything.
+  - A floating bar with the name, Open and Close fades out over images and video while the pointer rests.
+- Keyboard focus rings are gone from the whole interface.
+- Frost design: a redesigned dark mode with the same glass look, and the accent colour now follows the system accent (it was fixed to periwinkle).
+- New dependency: GStreamer (`gstreamer`, `gst-plugins-base`) is linked directly for audio playback.
+
 ## [0.5.0] - 2026-11-21
 
 - Disk Manager (menu → Disk Manager…, the Storage dialog, or right-click a drive in the sidebar):

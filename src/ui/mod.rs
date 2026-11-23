@@ -1,3 +1,5 @@
+pub mod archive_preview;
+pub mod audio_player;
 pub mod breadcrumb;
 pub mod clipboard;
 pub mod column_view;

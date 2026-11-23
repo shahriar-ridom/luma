@@ -136,6 +136,36 @@ pub fn audio_meta(path: &Path) -> Vec<MetaItem> {
     out
 }
 
+/// What an audio player shows: tags, duration and the embedded cover.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct AudioInfo {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration: std::time::Duration,
+    /// Encoded picture bytes (JPEG/PNG), the front cover when one is marked.
+    pub cover: Option<Vec<u8>>,
+}
+
+/// Read tags and cover art for a player. `None` when lofty can't parse the file.
+pub fn audio_info(path: &Path) -> Option<AudioInfo> {
+    use lofty::picture::PictureType;
+    let tf = lofty::read_from_path(path).ok()?;
+    let clean = |s: Option<std::borrow::Cow<'_, str>>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let mut info = AudioInfo { duration: tf.properties().duration(), ..Default::default() };
+    for t in tf.primary_tag().into_iter().chain(tf.tags()) {
+        info.title = info.title.or_else(|| clean(t.title()));
+        info.artist = info.artist.or_else(|| clean(t.artist()));
+        info.album = info.album.or_else(|| clean(t.album()));
+        if info.cover.is_none() {
+            let pics = t.pictures();
+            let pic = pics.iter().find(|p| p.pic_type() == PictureType::CoverFront).or_else(|| pics.first());
+            info.cover = pic.map(|p| p.data().to_vec()).filter(|d| !d.is_empty());
+        }
+    }
+    Some(info)
+}
+
 /// Extractors that need no external program, chosen by content type.
 pub fn extract_builtin(path: &Path, mime: &str) -> Vec<MetaGroup> {
     let mut g = Vec::new();

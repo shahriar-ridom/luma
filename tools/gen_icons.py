@@ -95,6 +95,10 @@ sym("sort", '<path d="M4.5 13V3M2.2 5.3 4.5 3l2.3 2.3M11.5 3v10M9.2 10.7l2.3 2.3
 sym("sliders", '<path d="M2.5 5h5.2M12.3 5h1.2M2.5 11h1.2M8.3 11h5.2"/><circle cx="10" cy="5" r="1.7"/><circle cx="6" cy="11" r="1.7"/>')
 
 sym("pause", '<path d="M5.6 3.5v9M10.4 3.5v9"/>')
+sym("play", '<path d="M5.4 3.7v8.6l6.9-4.3z"/>')
+sym("seek-backward", '<path d="M7.6 4.4 4 8l3.6 3.6M12.4 4.4 8.8 8l3.6 3.6"/>')
+sym("seek-forward", '<path d="M8.4 4.4 12 8l-3.6 3.6M3.6 4.4 7.2 8l-3.6 3.6"/>')
+sym("open-external", '<path d="M9.6 2.8h3.6v3.6M12.9 3.1 7.7 8.3"/><path d="M11.8 9.6v2.2a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4V5.6a1.4 1.4 0 0 1 1.4-1.4h2.2"/>')
 sym("sort-asc", '<path d="M8 13V3.2M4.6 6.6 8 3.2l3.4 3.4"/>')
 sym("sort-desc", '<path d="M8 3v9.8M4.6 9.4 8 12.8l3.4-3.4"/>')
 sym("undo", '<path d="M5.2 3.6 2.6 6.2l2.6 2.6"/><path d="M3 6.2h5.6a3.6 3.6 0 0 1 0 7.2H6"/>')

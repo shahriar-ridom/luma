@@ -269,6 +269,94 @@ fn parse_line(line: &str) -> Option<Entry> {
     Some(Entry { path: path.trim_end_matches('/').to_string(), size, is_dir })
 }
 
+/// One line of an archive's contents shown as a tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeRow {
+    /// Nesting level; 0 for top-level entries.
+    pub depth: usize,
+    /// Last path component.
+    pub name: String,
+    pub is_dir: bool,
+    /// File size, or the total of everything inside a folder.
+    pub size: u64,
+}
+
+/// Totals over an archive's contents.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub files: usize,
+    pub folders: usize,
+    /// Uncompressed size of all files.
+    pub bytes: u64,
+}
+
+/// Turn bsdtar's flat listing into tree order: each folder followed by its
+/// contents, folders before files, names in natural order. Folders that only
+/// appear as part of a path (ZIPs often omit them) are added, and every folder
+/// carries the size of what it contains.
+pub fn tree(entries: &[Entry]) -> (Vec<TreeRow>, Summary) {
+    use std::collections::{BTreeMap, HashMap};
+    // path → (is_dir, size)
+    let mut nodes: BTreeMap<String, (bool, u64)> = BTreeMap::new();
+    for e in entries {
+        let p = e.path.trim_start_matches("./").trim_matches('/');
+        if p.is_empty() || p == "." {
+            continue;
+        }
+        let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+        for i in 1..parts.len() {
+            nodes.entry(parts[..i].join("/")).or_insert((true, 0)).0 = true;
+        }
+        let key = parts.join("/");
+        let slot = nodes.entry(key).or_insert((e.is_dir, 0));
+        slot.0 |= e.is_dir;
+        if !e.is_dir {
+            slot.1 = e.size;
+        }
+    }
+    let mut summary = Summary::default();
+    let mut dir_size: HashMap<String, u64> = HashMap::new();
+    for (path, &(is_dir, size)) in &nodes {
+        if is_dir {
+            summary.folders += 1;
+            continue;
+        }
+        summary.files += 1;
+        summary.bytes += size;
+        let mut p = path.as_str();
+        while let Some(i) = p.rfind('/') {
+            p = &p[..i];
+            *dir_size.entry(p.to_string()).or_default() += size;
+        }
+    }
+    let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for path in nodes.keys() {
+        let parent = path.rfind('/').map_or("", |i| &path[..i]);
+        children.entry(parent).or_default().push(path);
+    }
+    let name_of = |p: &str| p.rfind('/').map_or(p, |i| &p[i + 1..]).to_string();
+    let mut rows = Vec::with_capacity(nodes.len());
+    // Depth-first walk with an explicit stack (deep archives must not overflow).
+    let sorted = |parent: &str| -> Vec<&str> {
+        let mut v = children.get(parent).cloned().unwrap_or_default();
+        v.sort_by(|a, b| {
+            let (da, db) = (nodes[*a].0, nodes[*b].0);
+            db.cmp(&da).then_with(|| crate::core::filesystem::natural_cmp(&name_of(a), &name_of(b)))
+        });
+        v
+    };
+    let mut stack: Vec<(usize, &str)> = sorted("").into_iter().rev().map(|p| (0, p)).collect();
+    while let Some((depth, path)) = stack.pop() {
+        let (is_dir, size) = nodes[path];
+        let size = if is_dir { dir_size.get(path).copied().unwrap_or(0) } else { size };
+        rows.push(TreeRow { depth, name: name_of(path), is_dir, size });
+        if is_dir {
+            stack.extend(sorted(path).into_iter().rev().map(|p| (depth + 1, p)));
+        }
+    }
+    (rows, summary)
+}
+
 fn unique_dir(parent: &Path, base: &str) -> PathBuf {
     let first = parent.join(base);
     if !first.exists() {
@@ -417,6 +505,44 @@ pub fn create(
 mod tests {
     use super::*;
     use std::fs;
+
+    fn e(path: &str, size: u64, is_dir: bool) -> Entry {
+        Entry { path: path.into(), size, is_dir }
+    }
+
+    #[test]
+    fn tree_orders_folders_first_and_fills_in_missing_parents() {
+        // As a ZIP lists it: no entry for "docs" or "docs/img", odd order.
+        let (rows, sum) = tree(&[
+            e("readme.txt", 10, false),
+            e("docs/img/a.png", 100, false),
+            e("docs/guide10.md", 5, false),
+            e("docs/guide2.md", 7, false),
+            e("./src/", 0, true),
+            e("src/main.rs", 30, false),
+        ]);
+        let view: Vec<(usize, &str, bool, u64)> =
+            rows.iter().map(|r| (r.depth, r.name.as_str(), r.is_dir, r.size)).collect();
+        assert_eq!(
+            view,
+            vec![
+                (0, "docs", true, 112),
+                (1, "img", true, 100),
+                (2, "a.png", false, 100),
+                (1, "guide2.md", false, 7),
+                (1, "guide10.md", false, 5),
+                (0, "src", true, 30),
+                (1, "main.rs", false, 30),
+                (0, "readme.txt", false, 10),
+            ]
+        );
+        assert_eq!(sum, Summary { files: 5, folders: 3, bytes: 152 });
+    }
+
+    #[test]
+    fn tree_of_nothing_is_empty() {
+        assert_eq!(tree(&[e("./", 0, true)]), (vec![], Summary::default()));
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp").join(name);

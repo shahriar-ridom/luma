@@ -16,7 +16,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   UBUNTU_DEPS: >-
-    build-essential pkg-config libgtk-4-dev libadwaita-1-dev libsqlite3-dev
+    build-essential pkg-config libgtk-4-dev libadwaita-1-dev libsqlite3-dev libgstreamer1.0-dev
     git libarchive-tools shared-mime-info
 
 jobs:
@@ -60,12 +60,12 @@ jobs:
           - name: Fedora
             image: fedora:latest
             setup: >-
-              dnf install -y gcc make git tar gzip curl pkgconf-pkg-config gtk4-devel
+              dnf install -y gcc make git tar gzip curl pkgconf-pkg-config gtk4-devel gstreamer1-devel
               libadwaita-devel sqlite-devel bsdtar shared-mime-info
           - name: Arch Linux
             image: archlinux:latest
             setup: >-
-              pacman -Syu --noconfirm base-devel git curl gtk4 libadwaita sqlite
+              pacman -Syu --noconfirm base-devel git curl gtk4 libadwaita sqlite gstreamer gst-plugins-base
               libarchive shared-mime-info
     container: ${{ matrix.image }}
     steps:

@@ -1,204 +1,414 @@
-/* ───────────────────────────── Luma ─────────────────────────────
-   Quiet frame, one raised sheet; solid surfaces and strong hairlines for contrast. Everything derives from libadwaita's named
-   colours, so light, dark and the system accent all come along for free.   */
+/* ───────────────────────────── Luma · Frost ──────────────────────────────────
+   Soft glass over a tinted wash, in light and dark.
 
-/* ── Motion ─────────────────────────────────────────────────────────── */
-@keyframes fm-rise      { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-@keyframes fm-slide-fwd { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
-@keyframes fm-slide-back{ from { opacity: 0; transform: translateX(-18px);} to { opacity: 1; transform: none; } }
+     backdrop  a tinted wash with soft glows, behind everything.
+     glass     panels are translucent with a 1px rim and a long, low shadow.
+               GTK has no backdrop blur, so the depth comes from alpha, the
+               rim and the wash showing through.
+     accent    the system accent: selection tint, focus, primary action.
+
+   Every colour is a token from theme-light.css or theme-dark.css, which
+   application/theme.rs loads in front of this file for the active scheme.
+   Rules here must not use literal colours. The accent is the system's:
+   the palettes derive their accent tokens from libadwaita's.
+
+   Controls follow three shapes only:
+     · grouped  — a recessed track holding flat segments (.fm-seg)
+     · ghost    — flat, tinted on hover (header buttons, rows, menu items)
+     · raised   — a frosted pill (buttons in dialogs and popovers)
+   Radii: 8 small chips, 10 controls and rows, 14 cards, 20 sheets.       */
+
+/* ── Motion ──────────────────────────────────────────────────────────── */
+@keyframes fm-rise      { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fm-slide-fwd { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@keyframes fm-slide-back{ from { opacity: 0; transform: translateX(-14px);} to { opacity: 1; transform: none; } }
 @keyframes fm-fade      { from { opacity: 0; } to { opacity: 1; } }
-
-.fm-sheet.fm-intro { animation: fm-rise 340ms cubic-bezier(.2, .8, .2, 1) both; }
-.fm-nav-fwd  { animation: fm-slide-fwd  220ms cubic-bezier(.2, .8, .2, 1) both; }
-.fm-nav-back { animation: fm-slide-back 220ms cubic-bezier(.2, .8, .2, 1) both; }
-.fm-nav-fade { animation: fm-fade 140ms ease-out both; }
-
-/* ── Activity island ────────────────────────────────────────────────────
-   A small piece of the sheet floating up into the frame: same surface,
-   hairline and shadow as .fm-sheet. Pill when compact, the sheet's 14px
-   corners when it opens into a card. Always there: idle it shows the drive
-   (ring) and the folder; colour changes only to say something: accent while
-   working, success when done, error on failure, warning when the drive is
-   nearly full. Size and position are animated in code (island_layout.rs). */
+@keyframes fm-pulse     { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes fm-island-swap { from { opacity: 0; } to { opacity: 1; } }
-.fm-island {
-  background-color: @view_bg_color;
-  color: @view_fg_color;
-  border: 1px solid alpha(@window_fg_color, 0.18);
-  border-radius: 999px;
-  padding: 5px 10px;
-  box-shadow: 0 1px 2px alpha(black, 0.06), 0 8px 22px -12px alpha(black, 0.4);
-  transition: border-radius 240ms cubic-bezier(.2, .8, .2, 1), box-shadow 200ms ease, border-color 200ms ease;
-}
-.fm-island:hover { border-color: alpha(@window_fg_color, 0.3); }
-/* Same top padding as the pill so the top row doesn't move when it opens. */
-.fm-island.expanded {
-  border-radius: 14px;
-  padding: 5px 16px 16px 16px;
-  box-shadow: 0 1px 2px alpha(black, 0.06), 0 18px 40px -16px alpha(black, 0.5);
-}
-.fm-island.error { border-color: alpha(@error_color, 0.45); }
-.fm-island-text.fm-island-swap { animation: fm-island-swap 220ms ease-out both; }
 
-.fm-island-ring { color: @accent_color; transition: color 200ms ease; }
-.fm-island.idle .fm-island-ring { color: alpha(@view_fg_color, 0.75); }
-.fm-island.idle.low-space .fm-island-ring { color: @warning_color; }
-.fm-island.done .fm-island-ring { color: @success_color; }
-.fm-island.error .fm-island-ring { color: @error_color; }
-.fm-island.stopped .fm-island-ring { color: alpha(@view_fg_color, 0.7); }
+.fm-sheet.fm-intro { animation: fm-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fm-nav-fwd  { animation: fm-slide-fwd  200ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fm-nav-back { animation: fm-slide-back 200ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.fm-nav-fade { animation: fm-fade 120ms ease-out both; }
+
+/* ── Backdrop (its glows live in the palettes) ───────────────────────── */
+window.fm-window { color: @ink; background-color: @wash; }
+separator { background-color: @line; min-height: 1px; min-width: 1px; }
+
+headerbar.fm-header {
+  background-color: @chrome; background-image: none;
+  box-shadow: inset 0 -1px 0 @rim; border: none; border-bottom: 1px solid @line; min-height: 52px;
+}
+
+/* ── The glass sheet: the file view ──────────────────────────────────── */
+.fm-sheet {
+  color: @ink;
+  background-color: @glass;
+  background-image: linear-gradient(to bottom, @sheet_top, @sheet_bottom);
+  border-radius: 20px;
+  border: 1px solid @rim;
+  margin: 8px 16px 16px 8px;
+  box-shadow: 0 1px 0 @rim inset, 0 18px 40px -16px alpha(@shadow, 0.32), 0 2px 6px alpha(@shadow, 0.08);
+}
+.fm-sheet separator { background-color: @line; }
+.fm-sheet image { color: @ink_2; }
+/* Empty states speak quietly: the glyph is an illustration, not a control. */
+.fm-sheet statuspage image, statuspage > scrolledwindow > viewport > box > image.icon { color: @empty_icon; }
+statuspage .title { color: @ink; }
+statuspage .description { color: @ink_2; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+button { border-radius: 10px; transition: background-color 140ms ease, box-shadow 140ms ease, color 140ms ease; }
+button.circular { border-radius: 999px; }
+
+/* Raised: a frosted pill. */
+button:not(.flat):not(.suggested-action):not(.destructive-action):not(.circular):not(.close) {
+  color: @ink; border: 1px solid @rim; min-height: 30px; padding: 0 12px;
+  background-image: none; background-color: @raised;
+  box-shadow: 0 1px 2px alpha(@shadow, 0.14), 0 0 0 1px @line;
+}
+button:not(.flat):not(.suggested-action):not(.destructive-action):not(.circular):not(.close):hover {
+  background-image: none; background-color: @raised_hover;
+}
+button:not(.flat):not(.suggested-action):not(.destructive-action):not(.circular):not(.close):active {
+  background-image: none; background-color: @pressed; box-shadow: inset 0 1px 2px alpha(@shadow, 0.2), 0 0 0 1px @line;
+}
+/* A latched button: tinted, accent legend. */
+button:not(.flat):not(.suggested-action):not(.circular):checked {
+  color: @accent_text; background-image: none; background-color: @tint; border-color: @rim;
+  box-shadow: 0 0 0 1px @select_edge;
+}
+button:disabled { color: @ink_3; opacity: 0.55; box-shadow: none; }
+
+/* Ghost: the header's standalone buttons sit flat on the chrome, like every
+   other header control, and only show a surface on hover or when latched. */
+headerbar.fm-header.fm-header button:not(.suggested-action):not(.circular):not(.close) {
+  color: @ink_2; background-image: none; background-color: transparent; border: 1px solid transparent; box-shadow: none;
+  min-height: 32px; min-width: 32px; padding: 0 7px;
+}
+headerbar.fm-header.fm-header button:not(.suggested-action):not(.circular):not(.close):hover { color: @ink; background-color: @hover_tint; }
+headerbar.fm-header.fm-header button:not(.suggested-action):not(.circular):not(.close):active { background-color: @select_tint; }
+headerbar.fm-header.fm-header button:not(.suggested-action):not(.circular):not(.close):checked {
+  color: @accent_text; background-color: @tint; box-shadow: none; border-color: transparent;
+}
+headerbar.fm-header.fm-header button:not(.suggested-action):not(.circular):not(.close):disabled { color: @ink_3; opacity: 0.5; background-color: transparent; }
+
+button.flat { color: @ink; }
+button.flat:hover { background-color: @hover_tint; }
+button.flat:active { background-color: @select_tint; }
+button.flat:checked { color: @accent_text; background-color: @select_tint; }
+button.circular { background-color: @raised; }
+button.circular:hover { background-color: @raised_hover; }
+
+/* The primary action: the one saturated thing on screen. */
+button.suggested-action {
+  color: @on_accent; font-weight: 600; border: none; min-height: 30px; padding: 0 14px;
+  background-image: linear-gradient(to bottom, @accent_hi, @accent);
+  box-shadow: inset 0 1px 0 alpha(white, 0.25), 0 6px 14px -4px alpha(@accent, 0.55);
+}
+button.suggested-action:hover { background-image: linear-gradient(to bottom, shade(@accent_hi, 1.06), @accent_hi); }
+button.suggested-action:active { background-image: linear-gradient(to bottom, @accent, @accent_lo); box-shadow: inset 0 1px 3px alpha(black, 0.25); }
+button.suggested-action:disabled { opacity: 0.45; box-shadow: none; }
+/* Destructive reads as a warning, not as a second primary. */
+button.destructive-action {
+  color: @destructive_color; font-weight: 600; min-height: 30px; padding: 0 14px; background-image: none;
+  background-color: alpha(@destructive_bg_color, 0.1); border: 1px solid alpha(@destructive_color, 0.45); box-shadow: none;
+}
+button.destructive-action:hover { background-color: alpha(@destructive_bg_color, 0.18); }
+button.destructive-action:active { background-color: alpha(@destructive_bg_color, 0.26); }
+
+/* Grouped: a recessed track holding flat segments. */
+.fm-seg { background-color: @track; border-radius: 12px; padding: 3px; box-shadow: inset 0 1px 2px alpha(@shadow, 0.12); }
+.fm-seg button, headerbar.fm-header.fm-header .fm-seg button:not(.suggested-action):not(.circular):not(.close) {
+  background-image: none; background-color: transparent; border: 1px solid transparent; box-shadow: none;
+  min-width: 28px; min-height: 26px; padding: 0 6px; border-radius: 9px; color: @ink_2;
+}
+.fm-seg button:hover, headerbar.fm-header.fm-header .fm-seg button:not(.suggested-action):not(.circular):not(.close):hover { background-color: @raised; color: @ink; }
+.fm-seg button:checked, headerbar.fm-header.fm-header .fm-seg button:not(.suggested-action):not(.circular):not(.close):checked {
+  background-color: @seg_on; color: @accent_text; border-color: transparent; box-shadow: 0 1px 3px alpha(@shadow, 0.22), inset 0 1px 0 @rim;
+}
+.fm-seg button:disabled, headerbar.fm-header.fm-header .fm-seg button:not(.suggested-action):not(.circular):not(.close):disabled { color: @ink_3; opacity: 0.45; background-color: transparent; }
+
+/* ── Inputs ──────────────────────────────────────────────────────────── */
+entry, spinbutton, passwordentry, textview, dropdown > button {
+  background-color: @field; color: @ink; caret-color: @accent; border: 1px solid @rim; border-radius: 10px;
+  box-shadow: 0 0 0 1px @line, inset 0 1px 2px alpha(@shadow, 0.08);
+}
+entry:focus-within, spinbutton:focus-within, passwordentry:focus-within { background-color: @field_focus; box-shadow: 0 0 0 2px alpha(@accent, 0.7); }
+entry.error { box-shadow: 0 0 0 2px @error_ring; }
+entry placeholder, entry > text > placeholder { color: @ink_3; opacity: 1; }
+entry selection, textview selection, text selection { background-color: alpha(@accent, 0.35); color: @ink; }
+entry.search, searchentry { border-radius: 999px; min-height: 30px; }
+headerbar.fm-header searchentry { min-height: 32px; }
+entry image, searchentry image { color: @ink_3; }
+dropdown > button { color: @ink; }
+textview > text { background: transparent; }
+
+/* Switches, checks, sliders */
+switch { background-color: @control_off; border: none; border-radius: 999px; box-shadow: inset 0 1px 2px alpha(@shadow, 0.2); }
+switch:checked { background-color: @accent; }
+switch slider { background-image: none; background-color: @knob; border: none; border-radius: 999px; box-shadow: 0 1px 3px alpha(@shadow, 0.45); }
+check, radio { background-color: @check_bg; border: 1px solid @check_edge; border-radius: 6px; box-shadow: none; color: transparent; }
+radio { border-radius: 999px; }
+check:checked, radio:checked, check:indeterminate { background-color: @accent; border-color: @accent; color: @on_accent; }
+scale trough, progressbar trough, levelbar trough { background-color: @trough; border: none; border-radius: 999px; min-height: 6px; box-shadow: none; }
+scale highlight, progressbar progress { background-color: @accent; border-radius: 999px; border: none; min-height: 6px; box-shadow: none; }
+scale slider { background-image: none; background-color: @knob; border: none; border-radius: 999px; min-width: 16px; min-height: 16px; box-shadow: 0 1px 4px alpha(@shadow, 0.5); }
+scrollbar slider { background-color: @scroll; border-radius: 999px; min-width: 6px; min-height: 6px; }
+scrollbar slider:hover { background-color: @scroll_hover; }
+tooltip, tooltip.background { background-color: @tip_bg; color: @tip_fg; border-radius: 8px; border: 1px solid @tip_edge; box-shadow: 0 6px 16px -4px alpha(@shadow, 0.4); }
+/* No keyboard focus rings anywhere: selection, hover and the text cursor
+   already show where you are. This provider outranks libadwaita's, so one
+   rule covers every widget. */
+*:focus-visible, *:focus-within, *:focus { outline: 0 solid transparent; outline-offset: 0; }
+
+.card, .boxed-list, row.card { background-color: @glass; border: 1px solid @rim; border-radius: 14px; box-shadow: 0 8px 20px -10px alpha(@shadow, 0.25), 0 0 0 1px @line; }
+.boxed-list > row { background: transparent; }
+.boxed-list > row + row { border-top: 1px solid @line; }
+.boxed-list > row:hover { background-color: @hover_tint; }
+window.dialog, window.messagedialog, dialog-host > sheet { background-color: @dialog_bg_color; color: @ink; border-radius: 20px; }
+.dim-label, .caption { color: @ink_2; opacity: 1; }
+
+/* ── Activity island: a frosted pill ─────────────────────────────────── */
+.fm-island {
+  background-color: @plate; color: @ink; border: 1px solid @rim; border-radius: 999px; padding: 5px 12px;
+  box-shadow: 0 0 0 1px @line, 0 6px 16px -8px alpha(@shadow, 0.35);
+  transition: border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.fm-island.expanded {
+  border-radius: 20px; padding: 5px 16px 16px 16px;
+  box-shadow: 0 0 0 1px @line, 0 20px 40px -12px alpha(@shadow, 0.4);
+}
+.fm-island.error { box-shadow: 0 0 0 2px @error_ring, 0 6px 16px -8px alpha(@shadow, 0.35); }
+.fm-island-text.fm-island-swap { animation: fm-island-swap 200ms ease-out both; }
+
+.fm-island-ring { color: @ink_3; transition: color 200ms ease; }
+.fm-island.idle .fm-island-ring { color: @ink_3; }
+.fm-island.idle.low-space .fm-island-ring { color: @warn_fill; }
+.fm-island:not(.idle):not(.done):not(.error):not(.stopped):not(.message) .fm-island-ring { color: @accent; animation: fm-pulse 1.2s ease-in-out infinite; }
+.fm-island.done .fm-island-ring { color: @ok_fill; }
+.fm-island.error .fm-island-ring { color: @bad_fill; }
+.fm-island.stopped .fm-island-ring { color: @ink_3; }
 
 .fm-island-top { min-height: 22px; }
-.fm-island-title { font-weight: 600; font-size: 0.9em; }
+.fm-island-title { font-weight: 600; }
 .fm-island.message .fm-island-title { font-weight: 500; }
-.fm-island-pct { font-size: 0.9em; font-weight: 600; font-feature-settings: "tnum"; color: @accent_color; }
-.fm-island.idle .fm-island-pct { font-weight: 500; color: alpha(@view_fg_color, 0.75); }
+.fm-island-pct, .fm-island-meta, .fm-status, .fm-mono { font-feature-settings: "tnum"; }
+.fm-island-pct { color: @accent_text; font-weight: 600; }
+.fm-island.idle .fm-island-pct { color: @ink_3; font-weight: 400; }
 .fm-island-details { margin-top: 14px; }
-.fm-island-op + .fm-island-op { border-top: 1px solid alpha(@window_fg_color, 0.14); padding-top: 14px; }
+.fm-island-op + .fm-island-op { border-top: 1px solid @line; padding-top: 14px; }
 .fm-island-op-title { font-weight: 600; }
-.fm-island-meta { font-size: 0.85em; font-feature-settings: "tnum"; color: alpha(@view_fg_color, 0.75); }
+.fm-island-meta { color: @ink_2; font-size: 0.9em; }
 .fm-island .failed .fm-island-op-title { color: @error_color; }
-.fm-island .failed .fm-island-meta { color: alpha(@view_fg_color, 0.75); }
 .fm-island scrolledwindow { background: transparent; }
-.fm-island button.circular { min-width: 26px; min-height: 26px; padding: 0; }
-.fm-island button.fm-island-action { min-height: 26px; padding: 0 12px; border-radius: 999px; font-weight: 600;
-  background-color: alpha(@accent_bg_color, 0.14); color: @accent_color; }
-.fm-island button.fm-island-action:hover { background-color: alpha(@accent_bg_color, 0.22); }
-.fm-island-bar trough, .fm-island-usage trough { background-color: alpha(@window_fg_color, 0.16); min-height: 4px; border-radius: 99px; border: none; box-shadow: none; }
-.fm-island-bar progress { background-color: @accent_bg_color; min-height: 4px; border-radius: 99px; }
-.fm-island-usage block.filled { background-color: alpha(@view_fg_color, 0.45); min-height: 4px; border-radius: 99px; }
-.fm-island-usage.low block.filled { background-color: @warning_color; }
+.fm-island button.circular { min-width: 26px; min-height: 26px; padding: 0; background: transparent; color: @ink_2; box-shadow: none; border: none; }
+.fm-island button.circular:hover { background-color: @select_tint; color: @accent_text; }
+.fm-island button.fm-island-action {
+  min-height: 26px; padding: 0 12px; border-radius: 999px; font-weight: 600; background-image: none;
+  background-color: @accent; color: @on_accent; border: none; box-shadow: none;
+}
+.fm-island button.fm-island-action:hover { background-color: @accent_hi; }
+.fm-island button.fm-island-action:active { background-color: @accent_lo; }
+.fm-island-bar trough, .fm-island-usage trough { background-color: @trough; border: none; min-height: 4px; border-radius: 99px; box-shadow: none; }
+.fm-island-bar progress { background-color: @accent; min-height: 4px; border-radius: 99px; }
+.fm-island-usage block.filled { background-color: @usage_fill; min-height: 4px; border-radius: 99px; }
+.fm-island-usage.low block.filled { background-color: @warn_fill; }
 .fm-island-usage block.empty { background: transparent; min-height: 4px; }
 .fm-island-usage { margin: 4px 0 2px 0; }
+.fm-hdr-item { transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease; }
 
-/* Header making room for the island: island_layout.rs generates per-control
-   transforms (shrink about the centre + slide toward the edge). Transforms
-   don't re-lay out the header, so this glides at sub-pixel precision. The
-   curve and length match the island's spring. */
-.fm-hdr-item { transition: transform 300ms cubic-bezier(.22, .9, .3, 1), opacity 220ms ease; }
+/* ── Trash ───────────────────────────────────────────────────────────── */
+.fm-trash-bar { padding: 8px 12px 6px 18px; border-bottom: 1px solid @line; }
+.fm-trash-note { color: @ink_2; font-size: 0.9em; }
+button.fm-trash-empty { border-radius: 999px; padding: 0 14px; min-height: 28px; font-weight: 600; background-image: none;
+  background-color: transparent; color: @destructive_color; border: 1px solid alpha(@destructive_color, 0.55); box-shadow: none; }
+button.fm-trash-empty:hover { background-color: alpha(@destructive_color, 0.1); }
+button.fm-trash-empty:active { background-color: alpha(@destructive_color, 0.18); }
+button.fm-trash-empty:disabled { color: @ink_3; border-color: @line; background-color: transparent; opacity: 0.8; }
 
-/* ── Trash ─────────────────────────────────────────────────────────── */
-.fm-trash-bar { padding: 8px 12px 6px 18px; }
-.fm-trash-note { font-size: 0.85em; color: alpha(@view_fg_color, 0.75); }
-.fm-trash-empty { border-radius: 999px; padding: 0 14px; min-height: 28px; font-weight: 600;
-  background-color: alpha(@error_bg_color, 0.14); color: @error_color; }
-.fm-trash-empty:hover { background-color: alpha(@error_bg_color, 0.22); }
-.fm-trash-empty:disabled { background-color: alpha(@view_fg_color, 0.1); color: alpha(@view_fg_color, 0.35); }
+/* ── Sidebar: a frosted column ───────────────────────────────────────── */
+.fm-split .sidebar-pane, .fm-split .sidebar-pane > * { background-color: @chrome; box-shadow: none; border: none; }
+.fm-split .sidebar-pane { border-right: 1px solid @rim; box-shadow: 1px 0 0 @line; }
+.fm-sidebar, .fm-sidebar list { background-color: transparent; }
+.fm-sidebar row { border-radius: 10px; margin: 1px 10px; padding: 0 6px; min-height: 36px; color: @ink; transition: background-color 120ms ease; }
+.fm-sidebar row:hover { background-color: @hover_tint; }
+.fm-sidebar row:selected { background-color: @tint; color: @accent_text; font-weight: 600; box-shadow: none; }
+.fm-sidebar row image { color: @ink_2; }
+.fm-sidebar row:selected image { color: @accent_text; }
+.fm-section { font-size: 0.82em; font-weight: 600; color: @ink_3; }
 
-/* ── Frame and sheet ────────────────────────────────────────────────── */
-window.fm-window { background-color: @window_bg_color; }
+/* ── Tabs: the active one is a lifted glass chip ─────────────────────── */
+tabbar.fm-tabbar > revealer > box { background-color: transparent; box-shadow: none; border: none; padding: 6px 16px 2px 8px; }
+tabbar.fm-tabbar tab { background: transparent; color: @ink_2; border-radius: 10px; min-height: 30px; margin: 0 2px; transition: background-color 120ms ease; }
+tabbar.fm-tabbar tab:hover { background-color: @hover_tint; }
+tabbar.fm-tabbar tab:selected { background-color: @seg_on; color: @ink; box-shadow: 0 0 0 1px @line, inset 0 1px 0 @rim, 0 3px 8px -3px alpha(@shadow, 0.3); }
+/* Chips need no dividers between them. */
+tabbar.fm-tabbar tabbox > separator { background-color: transparent; }
+tabbar.fm-tabbar tab image { color: @ink_2; }
+tabbar.fm-tabbar tab:selected image { color: @accent_text; }
+tabbar.fm-tabbar tab button.tab-close-button { color: @ink_3; }
+tabbar.fm-tabbar tab button.tab-close-button:hover { color: @ink; background-color: @hover_tint; }
 
-.fm-sheet {
-  background-color: @view_bg_color;
-  border-radius: 14px;
-  border: 1px solid alpha(@window_fg_color, 0.18);
-  box-shadow: 0 1px 2px alpha(black, 0.05), 0 14px 30px -18px alpha(black, 0.42);
-  margin: 0 12px 12px 2px;
+/* ── Location bar and status ─────────────────────────────────────────── */
+.pane-pathbar { padding: 6px 10px; border-bottom: 1px solid @line; }
+.fm-crumbs button, .fm-crumbs button:not(.flat) { border: none; border-radius: 8px; min-height: 26px; padding: 0 8px; font-weight: 500; color: @ink_2; background-image: none; background-color: transparent; box-shadow: none; }
+.fm-crumbs button:hover { color: @ink; background-color: @hover_tint; }
+.fm-crumbs .fm-crumb-current { font-weight: 600; color: @accent_text; background-color: @tint; }
+.fm-crumbs .fm-crumb-current:hover { color: @accent_text; background-color: @tint_hi; }
+.fm-crumb-sep { color: @ink_3; margin: 0 1px; }
+.fm-crumb-scroll undershoot.left { background-image: linear-gradient(to right, @sheet_solid, alpha(@sheet_solid, 0)); background-size: 20px 100%; background-repeat: no-repeat; }
+.pane-pathbar entry { border-radius: 8px; }
+.fm-status { color: @ink_2; font-size: 0.9em; }
+.pane-active .pane-pathbar { box-shadow: inset 0 -2px 0 alpha(@accent, 0.55); border-bottom-color: transparent; }
+
+/* ── File views ──────────────────────────────────────────────────────── */
+columnview.fm-list, gridview.fm-grid, listview.fm-miller, listview.fm-strip { background: transparent; color: @ink; }
+
+columnview.fm-list > header { background: transparent; border: none; border-bottom: 1px solid @line; box-shadow: none; padding: 0 8px; }
+columnview.fm-list > header > button:not(.flat):not(.suggested-action):not(.destructive-action):not(.circular):not(.close) {
+  font-weight: 600; font-size: 0.86em; color: @ink_2; background-image: none; background-color: transparent;
+  border: none; box-shadow: none; padding: 6px 10px; min-height: 26px; border-radius: 8px;
 }
-.fm-sheet separator { background-color: alpha(@window_fg_color, 0.14); min-height: 1px; min-width: 1px; }
-
-/* ── Header ─────────────────────────────────────────────────────────── */
-headerbar.fm-header { background: transparent; box-shadow: none; border: none; min-height: 50px; }
-headerbar.fm-header button { border-radius: 9px; min-width: 32px; min-height: 32px; }
-headerbar.fm-header button:active { transform: scale(0.93); }
-
-/* Segmented groups: one soft pill, the active segment lifts out of it. */
-.fm-seg { background-color: alpha(@window_fg_color, 0.1); border-radius: 11px; padding: 2px; }
-.fm-seg button { background: transparent; box-shadow: none; border-radius: 9px; min-width: 30px; min-height: 28px; padding: 0 6px; }
-.fm-seg button:hover { background-color: alpha(@window_fg_color, 0.14); }
-.fm-seg button:checked { background-color: @view_bg_color; box-shadow: 0 1px 2px alpha(black, 0.18), 0 0 0 1px alpha(@window_fg_color, 0.05); }
-.fm-seg button:disabled { opacity: 0.35; }
-
-headerbar.fm-header togglebutton:checked { background-color: alpha(@window_fg_color, 0.1); }
-
-entry.search, searchentry { border-radius: 999px; min-height: 30px; background-color: alpha(@window_fg_color, 0.1); box-shadow: none; }
-
-/* ── Sidebar ────────────────────────────────────────────────────────── */
-.fm-split .sidebar-pane, .fm-split .sidebar-pane > * { background: transparent; box-shadow: none; border: none; }
-.fm-sidebar, .fm-sidebar list { background: transparent; }
-.fm-sidebar row { border-radius: 9px; margin: 1px 10px; padding: 0 4px; min-height: 34px; transition: background-color 150ms ease; }
-.fm-sidebar row:hover { background-color: alpha(@window_fg_color, 0.06); }
-.fm-sidebar row:selected { background-color: alpha(@accent_bg_color, 0.34); color: @window_fg_color; }
-.fm-sidebar row:selected image { color: @accent_color; }
-.fm-sidebar row image { opacity: 0.95; }
-.fm-sidebar row:selected image { opacity: 1; }
-.fm-section { font-size: 0.78em; font-weight: 700; letter-spacing: 0.03em; opacity: 0.75; }
-
-/* ── Tabs ───────────────────────────────────────────────────────────── */
-tabbar.fm-tabbar > revealer > box { background: transparent; box-shadow: none; border: none; padding: 0 12px 6px 4px; }
-
-/* ── Location bar and status ────────────────────────────────────────── */
-.pane-pathbar { padding: 3px 8px; }
-.fm-crumbs button { border-radius: 8px; min-height: 28px; padding: 0 8px; font-weight: 500; opacity: 0.88; transition: background-color 120ms ease, opacity 120ms ease; }
-.fm-crumbs button:hover { opacity: 1; }
-.fm-crumbs .fm-crumb-current { font-weight: 700; opacity: 1; }
-.fm-crumb-sep { opacity: 0.55; margin: 0 1px; }
-/* Crumbs cut off on the left fade out instead of ending mid-word. */
-.fm-crumb-scroll undershoot.left { background-image: linear-gradient(to right, @view_bg_color, alpha(@view_bg_color, 0)); background-size: 28px 100%; background-repeat: no-repeat; }
-.pane-pathbar entry { border-radius: 9px; }
-.fm-status { font-size: 0.85em; font-feature-settings: "tnum"; opacity: 0.88; }
-.pane-active .pane-pathbar { box-shadow: inset 0 -2px @accent_bg_color; }
-
-/* ── File views ─────────────────────────────────────────────────────── */
-columnview.fm-list, gridview.fm-grid, listview.fm-miller, listview.fm-strip { background: transparent; }
-
-columnview.fm-list > header { background: transparent; border: none; box-shadow: none; padding: 2px 8px 0 8px; }
-columnview.fm-list > header > button { font-weight: 600; font-size: 0.84em; opacity: 0.8; background: transparent; box-shadow: none; padding: 6px 10px; min-height: 26px; }
-columnview.fm-list > header > button:hover { opacity: 0.9; }
+columnview.fm-list > header > button:not(.flat):hover { color: @ink; background-color: @hover_tint; background-image: none; }
 columnview.fm-list > header separator { background: transparent; min-width: 0; }
 columnview.fm-list > listview { background: transparent; }
-columnview.fm-list row, listview.fm-miller row { border-radius: 9px; margin: 1px 8px; min-height: 38px; transition: background-color 120ms ease; }
+columnview.fm-list row, listview.fm-miller row { border-radius: 10px; margin: 1px 8px; min-height: 36px; color: @ink; transition: background-color 100ms ease; }
 columnview.fm-list row cell { padding: 0 10px; font-feature-settings: "tnum"; }
-columnview.fm-list row:hover, listview.fm-miller row:hover { background-color: alpha(@view_fg_color, 0.1); }
-columnview.fm-list row:selected, listview.fm-miller row:selected { background-color: alpha(@accent_bg_color, 0.34); color: @view_fg_color; }
-columnview.fm-list row:selected:hover { background-color: alpha(@accent_bg_color, 0.42); }
-columnview.fm-list row image { -gtk-icon-size: 22px; }
+columnview.fm-list row:hover, listview.fm-miller row:hover { background-color: @hover_tint; }
+columnview.fm-list row:selected, listview.fm-miller row:selected { background-color: @select_tint; color: @accent_text; box-shadow: inset 0 0 0 1px @select_edge; }
+columnview.fm-list row:selected:hover, listview.fm-miller row:selected:hover { background-color: @select_hover; }
+columnview.fm-list row:selected label, listview.fm-miller row:selected label { color: @accent_text; }
+columnview.fm-list row image { -gtk-icon-size: 20px; }
 
 gridview.fm-grid { padding: 10px 14px; }
-gridview.fm-grid > child { border-radius: 14px; margin: 3px; padding: 4px 2px; transition: background-color 140ms ease; }
-gridview.fm-grid > child:hover { background-color: alpha(@view_fg_color, 0.1); }
-gridview.fm-grid > child:selected { background-color: alpha(@accent_bg_color, 0.34); }
-.fm-grid-item label { font-size: 0.92em; }
-.fm-thumb { border-radius: 9px; }
+gridview.fm-grid > child { border-radius: 14px; margin: 3px; padding: 6px 4px; color: @ink; transition: background-color 100ms ease; }
+gridview.fm-grid > child:hover { background-color: @hover_tint; box-shadow: inset 0 0 0 1px @line; }
+gridview.fm-grid > child:selected { background-color: @select_tint; color: @accent_text; box-shadow: inset 0 0 0 1px @select_edge; }
+gridview.fm-grid > child:selected:hover { background-color: @select_hover; }
+gridview.fm-grid > child:selected label { color: @accent_text; }
+.fm-grid-item label { font-size: 0.95em; }
+.fm-thumb { border-radius: 10px; }
 
 listview.fm-strip { padding: 8px 10px; }
 listview.fm-strip > row { border-radius: 12px; padding: 2px; margin: 0 2px; }
-listview.fm-strip > row:selected { background-color: alpha(@accent_bg_color, 0.38); }
+listview.fm-strip > row:hover { background-color: @hover_tint; }
+listview.fm-strip > row:selected { background-color: transparent; box-shadow: inset 0 0 0 2px @accent; }
 
-.fm-chev { opacity: 0.6; }
-scale.fm-zoom trough, .fm-sheet scale trough { min-height: 4px; border-radius: 999px; }
+.fm-chev { color: @ink_3; }
 
-/* ── Context menus ───────────────────────────────────────────────────── */
-popover.fm-menu > contents { padding: 6px; border-radius: 14px; }
-popover.fm-menu .fm-menu-item { font-weight: 400; border-radius: 8px; min-height: 32px; padding: 0 10px; transition: background-color 100ms ease; }
-popover.fm-menu .fm-menu-item:hover { background-color: alpha(@window_fg_color, 0.16); }
-popover.fm-menu .fm-menu-item:disabled { opacity: 0.5; }
-popover.fm-menu .fm-menu-accel { font-size: 0.85em; }
-popover.fm-menu .fm-menu-sep { margin: 5px 6px; background-color: alpha(@window_fg_color, 0.16); }
+/* ── Popovers and context menus: a frosted plate ─────────────────────── */
+popover > contents, popover.menu > contents {
+  background-color: @plate; color: @ink; border: 1px solid @rim; border-radius: 16px;
+  box-shadow: 0 0 0 1px @line, 0 18px 40px -10px alpha(@shadow, 0.38);
+}
+popover > arrow { background-color: @plate; border: 1px solid @line; }
+popover.fm-menu > contents { padding: 6px; }
+popover.fm-menu .fm-menu-item, popover.fm-menu .fm-menu-item:not(.flat) { font-weight: 500; border-radius: 10px; min-height: 32px; padding: 0 10px; color: @ink; background-image: none; background-color: transparent; border: none; box-shadow: none; transition: none; }
+popover.fm-menu .fm-menu-item:hover { background-color: @select_tint; color: @accent_text; }
+popover.fm-menu .fm-menu-item:hover label { color: @accent_text; }
+popover.fm-menu .fm-menu-item:active { background-color: @select_hover; }
+popover.fm-menu .fm-menu-item:disabled { color: @ink_3; background: transparent; opacity: 0.7; }
+popover.fm-menu .fm-menu-accel { font-size: 0.85em; color: @ink_3; }
+popover.fm-menu .fm-menu-item:hover .fm-menu-accel { color: @accent_text; }
+popover.fm-menu .fm-menu-sep { margin: 4px 6px; background-color: @line; }
+popover modelbutton { border-radius: 10px; min-height: 32px; padding: 0 10px; color: @ink; }
+popover modelbutton:hover, popover modelbutton:selected { background-color: @select_tint; color: @accent_text; }
+popover modelbutton accelerator { color: @ink_3; }
+popover modelbutton:disabled { color: @ink_3; opacity: 0.7; }
 
-/* ── Drag and drop ──────────────────────────────────────────────────── */
-.drop-hover { background-color: alpha(@accent_bg_color, 0.3); border-radius: 10px; }
+/* ── Drag and drop ───────────────────────────────────────────────────── */
+.drop-hover { background-color: @select_tint; border-radius: 12px; box-shadow: inset 0 0 0 2px alpha(@accent, 0.8); }
 
-/* ── Quick Look, preview, gallery ───────────────────────────────────── */
-.fm-preview .key { opacity: 0.78; font-size: 0.9em; }
-.fm-preview-media picture, .fm-preview-media image { border-radius: 12px; }
+/* ── Quick Look, preview, gallery ────────────────────────────────────── */
+.fm-preview .key { color: @ink_3; font-size: 0.9em; }
 .fm-preview-text { font-family: monospace; font-size: 0.92em; }
-.fm-gallery-strip { background-color: alpha(@window_fg_color, 0.07); border-top: 1px solid alpha(@window_fg_color, 0.16); }
+.fm-preview-media picture, .fm-preview-media image { border-radius: 12px; filter: none; }
+.fm-gallery-strip { background-color: @chrome; border-top: 1px solid @line; }
 .fm-gallery-nav { margin: 10px; }
 
-/* ── Badges: Git state, tags, usage ─────────────────────────────────── */
-.fm-tag-0 { color: #e5484d; } .fm-tag-1 { color: #f5a524; } .fm-tag-2 { color: #30a46c; }
-.fm-tag-3 { color: #3e63dd; } .fm-tag-4 { color: #8e4ec6; } .fm-tag-5 { color: #12a594; }
-.fm-tag-6 { color: #e93d82; }
+/* ── Quick Look: bezel-less, the content is the window ───────────────── */
+window.fm-quick-look { background-color: @ql_bg; color: @ink; }
+.fm-ql.video { background-color: black; }
+.fm-ql-image { background-color: alpha(@ql_bg, 0.6); }
+/* The picture's own colours, blurred and spread past the edges, frame it. */
+.fm-ql-ambient { filter: blur(56px) saturate(1.5); opacity: 0.7; transform: scale(1.2); }
 
-.fm-git { font-size: 0.72em; font-weight: 800; padding: 0 5px; border-radius: 5px; margin-right: 4px; }
-.fm-git-modified  { color: #f5a524; background-color: alpha(#f5a524, 0.16); }
-.fm-git-added     { color: #30a46c; background-color: alpha(#30a46c, 0.16); }
-.fm-git-untracked { color: #3e9bd5; background-color: alpha(#3e9bd5, 0.16); }
-.fm-git-bad       { color: #e5484d; background-color: alpha(#e5484d, 0.16); }
+.fm-ql-bar {
+  margin: 10px; padding: 4px; min-height: 36px; border-radius: 14px;
+  background-color: @ql_bar; border: 1px solid @rim;
+  box-shadow: 0 0 0 1px @line, 0 10px 28px -12px alpha(@shadow, 0.5);
+}
+.fm-ql-bar button.circular, .fm-ql-bar button.circular:not(.flat) { min-width: 30px; min-height: 30px; padding: 0; color: @ink_2; background-color: transparent; box-shadow: none; border: none; }
+.fm-ql-bar button.circular:hover { color: @ink; background-color: @hover_tint; }
+.fm-ql-bar button.circular:active { background-color: @select_tint; }
+.fm-ql-title { font-weight: 600; }
+.fm-ql-sub { font-size: 0.84em; color: @ink_2; font-feature-settings: "tnum"; }
+/* Over the audio player and archives only the two buttons float, without a plate. */
+.fm-ql.audio .fm-ql-bar, .fm-ql.archive .fm-ql-bar { background-color: transparent; border-color: transparent; box-shadow: none; }
+
+.fm-ql-text, textview.fm-ql-text { font-size: 1.02em; color: @ink; background-color: transparent; border: none; box-shadow: none; border-radius: 0; }
+.fm-ql-text > text { background-color: transparent; }
+.fm-ql-name { font-weight: 700; font-size: 1.2em; }
+
+/* Archive contents */
+.fm-ql-archive-head { padding: 52px 24px 16px 24px; }
+.fm-ql-archive-head .fm-ql-name { font-size: 1.1em; }
+listview.fm-ql-archive { background-color: transparent; padding: 6px 8px; }
+listview.fm-ql-archive > row { min-height: 30px; padding: 0 12px; border-radius: 8px; }
+listview.fm-ql-archive > row:hover { background-color: @hover_tint; }
+listview.fm-ql-archive .fm-ql-folder { font-weight: 600; }
+listview.fm-ql-archive .fm-ql-meta { font-size: 0.88em; }
+.fm-ql-meta { color: @ink_2; font-feature-settings: "tnum"; }
+
+/* ── Audio player: cover art over a blurred copy of itself ──────────── */
+.fm-player-ambient { filter: blur(60px) saturate(1.8); transform: scale(1.4); opacity: 0; transition: opacity 320ms ease; }
+.fm-player.has-art .fm-player-ambient { opacity: 1; }
+.fm-player.has-art .fm-player-scrim { background-color: @media_veil; }
+/* Without art, a soft accent glow stands in. */
+.fm-player:not(.has-art) .fm-player-scrim { background-image: radial-gradient(circle at 50% 28%, alpha(@accent, 0.22), alpha(@accent, 0) 70%); }
+.fm-player-cover {
+  border-radius: 16px; background-image: linear-gradient(135deg, @tint_hi, @tint);
+  box-shadow: 0 0 0 1px @line, 0 22px 44px -16px alpha(@shadow, 0.6);
+}
+.fm-player.has-art .fm-player-cover { background-image: none; }
+.fm-player-glyph { color: @accent_text; }
+.fm-player-title { font-weight: 700; font-size: 1.15em; color: @ink; }
+.fm-player-sub { color: @ink_2; }
+.fm-player-time { font-size: 0.8em; color: @ink_2; font-feature-settings: "tnum"; }
+scale.fm-player-seek { padding: 6px 0; }
+scale.fm-player-seek trough { min-height: 4px; background-color: alpha(@ink, 0.14); }
+scale.fm-player-seek highlight { min-height: 4px; background-color: @ink; }
+scale.fm-player-seek slider { min-width: 12px; min-height: 12px; margin: -4px 0; opacity: 0; transition: opacity 140ms ease; }
+scale.fm-player-seek:hover slider, scale.fm-player-seek:focus-visible slider, scale.fm-player-seek:active slider { opacity: 1; }
+.fm-player button.fm-player-play {
+  min-width: 56px; min-height: 56px; padding: 0; border: none; -gtk-icon-size: 22px;
+  background-image: none; background-color: @play_bg; color: @play_fg;
+  box-shadow: 0 10px 24px -10px alpha(@shadow, 0.6);
+}
+.fm-player button.fm-player-play:hover { background-color: alpha(@play_bg, 0.88); }
+.fm-player button.fm-player-play:active { background-color: alpha(@play_bg, 0.76); }
+.fm-player button.fm-player-skip { min-width: 40px; min-height: 40px; padding: 0; color: @ink; -gtk-icon-size: 18px; background-color: transparent; box-shadow: none; }
+.fm-player button.fm-player-skip:hover { background-color: @hover_tint; }
+.fm-player button:disabled { opacity: 0.4; }
+/* In the side preview the player sits on the sheet as a card. */
+.fm-preview .fm-player { border-radius: 14px; margin: 8px; }
+
+/* ── Badges: Git state, tags, usage ──────────────────────────────────── */
+/* Tag hues sit mid-lightness so the dots read on light and dark glass. */
+.fm-tag-0 { color: #e0554a; } .fm-tag-1 { color: #d99212; } .fm-tag-2 { color: #26a866; }
+.fm-tag-3 { color: #3d7cf0; } .fm-tag-4 { color: #9a5ee0; } .fm-tag-5 { color: #1aa898; }
+.fm-tag-6 { color: #e04b8e; }
+
+.fm-git { font-size: 0.75em; font-weight: 700; min-width: 10px; padding: 1px 6px; border-radius: 999px; margin-right: 4px; }
+.fm-git-modified  { color: @warning_color; background-color: alpha(@warn_fill, 0.2); }
+.fm-git-added     { color: @success_color; background-color: alpha(@ok_fill, 0.18); }
+.fm-git-untracked { color: @ink_2; background-color: alpha(@ink, 0.08); }
+.fm-git-bad       { color: @error_color; background-color: alpha(@bad_fill, 0.16); }
 .fm-git-ignored   { opacity: 0.45; }
 
-levelbar.fm-usage block.filled { background-color: @accent_bg_color; }
-levelbar.fm-usage.warn block.filled { background-color: @warning_bg_color; }
-levelbar.fm-usage.crit block.filled { background-color: @error_bg_color; }
+levelbar.fm-usage block.filled { background-color: @accent; }
+levelbar.fm-usage.warn block.filled { background-color: @warn_fill; }
+levelbar.fm-usage.crit block.filled { background-color: @bad_fill; }
 levelbar.fm-usage trough { border-radius: 999px; }
 levelbar.fm-usage block { border-radius: 999px; }

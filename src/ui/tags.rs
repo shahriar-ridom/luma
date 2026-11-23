@@ -26,6 +26,8 @@ pub fn fill_badges(row: &gtk::Box, tags: &[String], git: Option<crate::integrati
     if let Some(s) = git {
         let l = gtk::Label::new(Some(s.letter()));
         l.add_css_class("fm-git");
+        // A compact pill, not one stretched to the row's height.
+        l.set_valign(gtk::Align::Center);
         l.add_css_class(s.css());
         l.set_tooltip_text(Some(s.label()));
         row.append(&l);

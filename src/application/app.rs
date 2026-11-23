@@ -32,10 +32,8 @@ pub fn run() -> glib::ExitCode {
         opening.set(AppState::open()).ok();
         // Only the primary instance answers other apps' "show in folder" requests.
         own_file_manager_bus_name(app, opening.clone());
-        let css = gtk::CssProvider::new();
-        css.load_from_string(include_str!("../../data/style.css"));
         if let Some(d) = gtk::gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(&d, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            crate::application::theme::install(&d);
             // Our icon family ships inside the binary (and in packages).
             match crate::application::resources::icon_search_path(&glib::user_cache_dir()) {
                 Ok(dir) => {

@@ -4,7 +4,8 @@
 //! checks it before touching the UI, so fast selection changes never flash
 //! stale content. Text reads are capped and images are decoded off-thread at
 //! a bounded size. Video/audio is only loaded for the current target and
-//! released as soon as it changes.
+//! released as soon as it changes. Audio plays through `AudioPlayer`, never
+//! GTK's media backend (see `audio_player` for why).
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -16,6 +17,7 @@ use std::{
 
 use crate::core::filesystem::{human_size, is_dir};
 use crate::services::thumbnail;
+use crate::ui::audio_player::AudioPlayer;
 
 const TEXT_CAP: i32 = 64 * 1024;
 const COUNT_CAP: usize = 100_000;
@@ -28,6 +30,7 @@ pub struct Preview {
     picture: gtk::Picture,
     text: gtk::TextView,
     video: gtk::Video,
+    audio: Rc<AudioPlayer>,
     icon: gtk::Image,
     title: gtk::Label,
     meta: gtk::Box,
@@ -36,7 +39,7 @@ pub struct Preview {
     image_px: i32,
 }
 
-fn is_textual(ct: &str) -> bool {
+pub(crate) fn is_textual(ct: &str) -> bool {
     gio::content_type_is_a(ct, "text/plain")
         || matches!(
             ct,
@@ -70,6 +73,7 @@ impl Preview {
         text_sw.set_child(Some(&text));
         let video = gtk::Video::new();
         video.set_autoplay(true);
+        let audio = AudioPlayer::new(if large { 168 } else { 148 });
         let icon = gtk::Image::new();
         icon.set_pixel_size(if large { 192 } else { 128 });
         let empty = adw::StatusPage::new();
@@ -85,6 +89,7 @@ impl Preview {
         media.add_named(&picture, Some("image"));
         media.add_named(&text_sw, Some("text"));
         media.add_named(&video, Some("video"));
+        media.add_named(&audio.widget, Some("audio"));
         media.set_vexpand(true);
         media.set_hexpand(true);
         media.set_size_request(if large { 280 } else { 240 }, if large { 150 } else { 220 });
@@ -130,6 +135,7 @@ impl Preview {
             picture,
             text,
             video,
+            audio,
             icon,
             title,
             meta,
@@ -137,11 +143,6 @@ impl Preview {
             current: RefCell::default(),
             image_px: if large { 2048 } else { 1024 },
         })
-    }
-
-    /// For hosts that already show the file name (Quick Look's title bar).
-    pub fn hide_title(&self) {
-        self.title.set_visible(false);
     }
 
     fn clear_meta(&self) {
@@ -178,6 +179,7 @@ impl Preview {
         }
         self.video.set_media_stream(None::<&gtk::MediaStream>);
         self.video.set_file(None::<&gio::File>);
+        self.audio.stop();
     }
 
     pub fn show(self: &Rc<Self>, target: Option<Target>) {
@@ -261,7 +263,10 @@ impl Preview {
                     }
                 }
             });
-        } else if ct.starts_with("video/") || ct.starts_with("audio/") {
+        } else if ct.starts_with("audio/") {
+            this.audio.load(&path);
+            this.media.set_visible_child_name("audio");
+        } else if ct.starts_with("video/") {
             this.video.set_file(Some(&gio::File::for_path(&path)));
             this.media.set_visible_child_name("video");
             if let Some(ms) = this.video.media_stream() {
@@ -312,14 +317,14 @@ impl Preview {
     }
 }
 
-async fn read_head(path: &std::path::Path, max: i32) -> Option<Vec<u8>> {
+pub(crate) async fn read_head(path: &std::path::Path, max: i32) -> Option<Vec<u8>> {
     let f = gio::File::for_path(path);
     let s = f.read_future(glib::Priority::DEFAULT).await.ok()?;
     let b = s.read_bytes_future(max as usize, glib::Priority::DEFAULT).await.ok()?;
     Some(b.to_vec())
 }
 
-async fn count_children(path: &std::path::Path, cap: usize) -> Option<usize> {
+pub(crate) async fn count_children(path: &std::path::Path, cap: usize) -> Option<usize> {
     let en = gio::File::for_path(path)
         .enumerate_children_future("standard::name", gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS, glib::Priority::LOW)
         .await
@@ -336,7 +341,7 @@ async fn count_children(path: &std::path::Path, cap: usize) -> Option<usize> {
 }
 
 /// Minimal Markdown: headings, bullets, fenced code, `code` and **bold**.
-fn render_markdown(buf: &gtk::TextBuffer, src: &str) {
+pub(crate) fn render_markdown(buf: &gtk::TextBuffer, src: &str) {
     buf.set_text("");
     let table = buf.tag_table();
     for (name, scale, bold) in [("h1", 1.6, true), ("h2", 1.35, true), ("h3", 1.15, true), ("bold", 1.0, true)] {

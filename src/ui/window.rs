@@ -165,6 +165,7 @@ pub fn icon_pack_menu() -> gio::Menu {
 }
 
 pub fn apply_color_scheme(name: &str) {
+    // The stylesheet follows the result (see `application::theme`).
     adw::StyleManager::default().set_color_scheme(match name {
         "light" => adw::ColorScheme::ForceLight,
         "dark" => adw::ColorScheme::ForceDark,
@@ -321,6 +322,15 @@ impl WinCtl {
         let menu_btn = gtk::MenuButton::new();
         menu_btn.set_icon_name(crate::application::icons::themed("luma-more-symbolic"));
         menu_btn.set_menu_model(Some(&main_menu));
+        menu_btn.set_tooltip_text(Some("Main menu"));
+
+        // View options, Quick Look and Recent share one track, like the
+        // navigation and view groups on the left.
+        let tools_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tools_box.add_css_class("fm-seg");
+        tools_box.append(&options_btn);
+        tools_box.append(&preview_btn);
+        tools_box.append(&recent_btn);
 
         let title = adw::WindowTitle::new("", "");
         let header = adw::HeaderBar::new();
@@ -331,9 +341,7 @@ impl WinCtl {
         header.pack_start(&nav_box);
         header.pack_start(&view_box);
         header.pack_end(&menu_btn);
-        header.pack_end(&recent_btn);
-        header.pack_end(&preview_btn);
-        header.pack_end(&options_btn);
+        header.pack_end(&tools_box);
         header.pack_end(&search);
 
         // ---- tabs ------------------------------------------------------------
@@ -443,13 +451,7 @@ impl WinCtl {
             ops.island(),
             &header,
             vec![sidebar_btn.clone().upcast(), nav_box.clone().upcast(), view_box.clone().upcast()],
-            vec![
-                search.clone().upcast(),
-                options_btn.clone().upcast(),
-                preview_btn.clone().upcast(),
-                recent_btn.clone().upcast(),
-                menu_btn.clone().upcast(),
-            ],
+            vec![search.clone().upcast(), tools_box.clone().upcast(), menu_btn.clone().upcast()],
             vec![(search.clone().upcast(), 2), (view_box.clone().upcast(), 3)],
         );
         win.set_content(Some(&island_layer));
@@ -826,13 +828,22 @@ impl WinCtl {
             self.island_demo(PathBuf::from(dir));
         }
         #[cfg(debug_assertions)]
-        if std::env::var("FM_QUICKLOOK").is_ok() {
+        if let Ok(v) = std::env::var("FM_QUICKLOOK") {
             let w = Rc::downgrade(self);
             glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
                 if let Some(c) = w.upgrade() {
                     c.run_action("quick-preview");
                 }
             });
+            // `FM_QUICKLOOK=<dir>` also saves Quick Look as <dir>/quick-look.png.
+            if v != "1" {
+                let w = Rc::downgrade(self);
+                glib::timeout_add_local_once(std::time::Duration::from_millis(3500), move || {
+                    if let Some(c) = w.upgrade() {
+                        c.quick_look.snapshot(&PathBuf::from(&v).join("quick-look.png"));
+                    }
+                });
+            }
         }
     }
 

@@ -13,7 +13,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   UBUNTU_DEPS: >-
-    build-essential pkg-config libgtk-4-dev libadwaita-1-dev libsqlite3-dev
+    build-essential pkg-config libgtk-4-dev libadwaita-1-dev libsqlite3-dev libgstreamer1.0-dev
     git libarchive-tools shared-mime-info
 
 jobs:
@@ -118,7 +118,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install build tools
-        run: pacman -Syu --noconfirm base-devel git rust gtk4 libadwaita sqlite libarchive shared-mime-info
+        run: pacman -Syu --noconfirm base-devel git rust gtk4 libadwaita sqlite libarchive shared-mime-info gstreamer gst-plugins-base
       - uses: actions/checkout@v4
       - name: Build with makepkg
         run: |
@@ -143,7 +143,7 @@ jobs:
       - name: Install build tools
         run: |
           dnf install -y rpm-build git tar gzip gcc make rust cargo pkgconf-pkg-config \
-            'pkgconfig(gtk4)' 'pkgconfig(libadwaita-1)' 'pkgconfig(sqlite3)' \
+            'pkgconfig(gtk4)' 'pkgconfig(libadwaita-1)' 'pkgconfig(sqlite3)' 'pkgconfig(gstreamer-1.0)' \
             desktop-file-utils libappstream-glib bsdtar shared-mime-info
       - uses: actions/checkout@v4
       - name: Build with rpmbuild
