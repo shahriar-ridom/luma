@@ -4,7 +4,7 @@ All notable changes are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.1] - 2026-11-23
 
 - **Fixed:** previewing an MP3 could crash Luma (in Quick Look, the preview panel and the gallery). GTK's media backend plays through GStreamer's `playbin3`, whose decodebin3 aborts on MP3 streams when they are seeked or restarted (GStreamer 1.28). Audio now plays on Luma's own `playbin` pipeline, which never reaches that code.
 - Quick Look redesign: bezel-less, the window takes the shape of its content.
